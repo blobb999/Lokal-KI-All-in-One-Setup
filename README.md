@@ -33,11 +33,9 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 ## Verwendung
 
 1. **Voraussetzungen**:
-   - Python 3.8+
-   - Docker und Docker Compose installiert
-   - tkinter für die GUI
-2. **Installation**:
-   ```bash
-   git clone <repository-url>
-   cd <repository-name>
-   pip install -r requirements.txt
+   - Windows Build aktualisiert
+   - WSL & Virtualisierung aktiviert
+2. **Hardware mindest Voraussetzung**:
+   - i5 i5-8500
+   - mindestens GPU RTX 3050
+   - Ram 32 GB
