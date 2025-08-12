@@ -15,8 +15,9 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
   - Ollama API (Default: 11434)
   - Vision Service (Default: 5000)
   - Kyutai Voice (Default: 8000)
-  - SearxNG Web (Default: 8888)
   - Stable Diffusion (Default: 7860)
+  - SearxNG Web (Default: 8888) (Bonus App)
+
 - **Dienste**:
   - **n8n**: Automatisierung von Workflows mit Web-UI und Workflow-Import.
   - **Ollama**: API für Sprachmodelle mit Modell-Download-Funktion.
