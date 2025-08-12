@@ -4,7 +4,7 @@
 
 Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche) zur Verwaltung einer lokalen KI- und Automatisierungsplattform. Sie ermöglicht das einfache Einrichten, Starten, Stoppen und Überwachen mehrerer KI- und Automatisierungsdienste über Docker. Die Plattform integriert verschiedene Tools für Workflows, Sprachmodelle, Bildverarbeitung, Sprachsynthese, Websuche und Bildgenerierung.
 
-![GUI Screenshot](Local-KI-All-in-One-Setup.jpg)
+![GUI Screenshot](Local-KI-All-in-One-SetupV3.jpg)
 
 ## Funktionen
 
