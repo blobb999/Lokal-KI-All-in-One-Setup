@@ -40,6 +40,30 @@ import urllib.request
 import platform
 from string import Template
 import textwrap
+from queue import Queue
+try:
+    import psutil
+    import pynvml
+    import matplotlib
+    # KORREKTUR: Importiere pyplot, um Zugriff auf 'style' zu erhalten
+    import matplotlib.pyplot as plt
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    
+    # Matplotlib Backend und Stil setzen
+    matplotlib.use("TkAgg")
+    # KORREKTUR: Verwende plt.style statt matplotlib.style
+    plt.style.use("seaborn-v0_8-darkgrid") 
+    
+    PSUTIL_OK = True
+    PYNVML_OK = True
+    MATPLOTLIB_OK = True
+except ImportError as e:
+    # Fallback, falls eines der Module nicht installiert ist
+    print(f"Info: Monitoring-Modul nicht gefunden: {e}. Dashboard wird deaktiviert.")
+    PSUTIL_OK = False
+    PYNVML_OK = False
+    MATPLOTLIB_OK = False
 
 # --------------------------- Konfiguration ---------------------------
 DEFAULT_PROJECT_DIR = Path.home() / "mein-ki-setup"
@@ -119,40 +143,331 @@ def run_cmd_capture(cmd, cwd=None, shell=False):
     except Exception as e:
         return 1, str(e)
 
+
+class SystemMonitor:
+    def __init__(self, update_callback):
+        self.update_callback = update_callback
+        self._stop_event = threading.Event()
+        self.is_running = False
+        
+        # KORREKTUR: Initialisiere die Werte hier, damit sie im Thread verfügbar sind
+        self.last_net_io = psutil.net_io_counters()
+        self.last_time = time.time()
+
+        self.gpu_handle = None
+        if PYNVML_OK:
+            try:
+                pynvml.nvmlInit()
+                # Wir nehmen an, dass die primäre GPU für KI bei Index 0 liegt
+                self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            except Exception as e:
+                print(f"Warnung: NVIDIA GPU nicht gefunden oder pynvml-Fehler: {e}")
+                self.gpu_handle = None
+
+    def get_stats(self):
+        """Sammelt alle Systemstatistiken"""
+        current_time = time.time()
+        time_delta = current_time - self.last_time
+        if time_delta == 0: time_delta = 1 # Division durch Null vermeiden
+
+        current_net_io = psutil.net_io_counters()
+        bytes_sent = current_net_io.bytes_sent - self.last_net_io.bytes_sent
+        bytes_recv = current_net_io.bytes_recv - self.last_net_io.bytes_recv
+        self.last_net_io = current_net_io
+        self.last_time = current_time
+
+        ram = psutil.virtual_memory()
+        
+        # KORREKTUR: Verwende den Projektpfad, um das richtige Laufwerk zu finden
+        try:
+            project_path = Path(DEFAULT_PROJECT_DIR).expanduser()
+            # Stelle sicher, dass das Verzeichnis existiert, um einen Fehler zu vermeiden
+            if not project_path.exists():
+                project_path.mkdir(parents=True, exist_ok=True)
+            disk = psutil.disk_usage(str(project_path))
+        except Exception:
+            # Fallback auf das Wurzelverzeichnis, falls etwas schiefgeht
+            disk = psutil.disk_usage('/')
+
+        cpu_temp = "N/A"
+        if hasattr(psutil, "sensors_temperatures"):
+            temps = psutil.sensors_temperatures()
+            # Verschiedene Schlüssel für verschiedene Systeme (Windows/Linux)
+            if 'coretemp' in temps:
+                cpu_temp = temps['coretemp'][0].current
+            elif temps: # Nimm den ersten verfügbaren Sensor
+                cpu_temp = list(temps.values())[0][0].current
+
+        gpu_name, gpu_util, gpu_mem_percent, gpu_mem_used, gpu_mem_total, gpu_temp = [None] * 6
+        if self.gpu_handle:
+            try:
+                # KORREKTUR: .decode() wird nicht mehr benötigt
+                gpu_name = pynvml.nvmlDeviceGetName(self.gpu_handle)
+                util = pynvml.nvmlDeviceGetUtilizationRates(self.gpu_handle)
+                gpu_util = util.gpu
+                mem = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle)
+                gpu_mem_total = mem.total // 1024**2
+                gpu_mem_used = mem.used // 1024**2
+                gpu_mem_percent = int((mem.used / mem.total) * 100) if mem.total > 0 else 0
+                gpu_temp = pynvml.nvmlDeviceGetTemperature(self.gpu_handle, pynvml.NVML_TEMPERATURE_GPU)
+            except pynvml.NVMLError:
+                self.gpu_handle = None # Deaktiviere bei Fehler
+
+        return {
+            "cpu_percent": psutil.cpu_percent(), "cpu_temp": cpu_temp,
+            "ram_percent": ram.percent, "ram_total": ram.total / (1024**3), "ram_used": ram.used / (1024**3),
+            "disk_percent": disk.percent, "disk_total": disk.total / (1024**3), "disk_used": disk.used / (1024**3),
+            "net_down": (bytes_recv / time_delta) / (1024**2),
+            "net_up": (bytes_sent / time_delta) / (1024**2),
+            "gpu_name": gpu_name, "gpu_util": gpu_util, "gpu_mem_percent": gpu_mem_percent,
+            "gpu_mem_used": gpu_mem_used, "gpu_mem_total": gpu_mem_total, "gpu_temp": gpu_temp,
+        }
+
+    def run(self):
+        self.is_running = True
+        while not self._stop_event.is_set():
+            try:
+                stats = self.get_stats()
+                # Rufe den GUI-Callback sicher auf
+                self.update_callback(stats)
+            except Exception as e:
+                print(f"Fehler im Monitor-Thread: {e}")
+            time.sleep(2)
+        self.is_running = False
+        if PYNVML_OK and self.gpu_handle:
+            try:
+                pynvml.nvmlShutdown()
+            except: pass
+
+    def start(self):
+        if not self.is_running:
+            self._stop_event.clear()
+            threading.Thread(target=self.run, daemon=True).start()
+
+    def stop(self):
+        self._stop_event.set()
+
+# --------------------------- GUI Klasse ---------------------------
 # --------------------------- GUI Klasse ---------------------------
 class AllInOneGUI:
     def __init__(self, root):
         self.root = root
-        root.title("Local KI All-in-One Setup v2.0")
-        root.geometry("1400x900")
+        root.title("Local KI All-in-One Setup & Monitoring v2.2")
+        root.geometry("1600x900") # Leicht angepasst für besseres Layout
 
-        # --- Setup Progress Frame ---
-        self.setup_frame = ttk.LabelFrame(root, text="🔧 Setup-Reihenfolge (1-8)")
+        self.log_queue = Queue()
+
+        main_pane = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
+        main_pane.pack(fill=tk.BOTH, expand=True)
+
+        left_frame = ttk.Frame(main_pane, width=1000)
+        main_pane.add(left_frame, weight=3) # Mehr Gewicht für den Hauptbereich
+
+        right_frame = ttk.Frame(main_pane, width=500)
+        main_pane.add(right_frame, weight=1)
+
+        # --- Linker Frame ---
+        self.setup_frame = ttk.LabelFrame(left_frame, text="🔧 Setup-Reihenfolge (1-8)")
         self.setup_frame.pack(fill=tk.X, padx=8, pady=6)
-
-        # Setup Steps mit Buttons
+        # ... (Setup-Buttons bleiben gleich)
         setup_steps = [
-            ("1⃣ Python 3.8+ prüfen", self.check_python_setup),
-            ("2⃣ Git Installation prüfen", self.check_git_setup),
-            ("3⃣ Docker Installation", self.setup_docker_info),
-            ("4⃣ Ollama lokal installieren", self.setup_ollama_local),
-            ("5⃣ Projekt anlegen", self.create_project),
-            ("6⃣ Kyutai Repo klonen", self.clone_kyutai),
-            ("7⃣ Docker Compose schreiben", self.write_compose),
-            ("8⃣ Docker Services starten", self.docker_up)
+            ("1⃣ Python 3.8+ prüfen", self.check_python_setup), ("2⃣ Git Installation prüfen", self.check_git_setup),
+            ("3⃣ Docker Installation", self.setup_docker_info), ("4⃣ Ollama lokal installieren", self.setup_ollama_local),
+            ("5⃣ Projekt anlegen", self.create_project), ("6⃣ Kyutai Repo klonen", self.clone_kyutai),
+            ("7⃣ Docker Compose schreiben", self.write_compose), ("8⃣ Docker Services starten", self.docker_up)
         ]
-
         for i, (text, command) in enumerate(setup_steps):
             btn = ttk.Button(self.setup_frame, text=text, command=self.threaded(command))
             btn.grid(column=i % 4, row=i // 4, padx=4, pady=4, sticky="ew")
+        for i in range(4): self.setup_frame.columnconfigure(i, weight=1)
 
-        # Configure grid weights for setup frame
-        for i in range(4):
-            self.setup_frame.columnconfigure(i, weight=1)
-
-        # --- Top Frame: Einstellungen ---
-        topf = ttk.LabelFrame(root, text="⚙️ Einstellungen")
+        topf = ttk.LabelFrame(left_frame, text="⚙️ Einstellungen")
         topf.pack(fill=tk.X, padx=8, pady=6)
+        # ... (Einstellungen bleiben gleich)
+        ttk.Label(topf, text="Projektordner:").grid(column=0, row=0, sticky=tk.W, padx=6, pady=4)
+        self.project_var = tk.StringVar(value=str(DEFAULT_PROJECT_DIR))
+        self.project_entry = ttk.Entry(topf, textvariable=self.project_var, width=70)
+        self.project_entry.grid(column=1, row=0, columnspan=3, sticky=tk.EW, padx=6)
+        ttk.Button(topf, text="Browse", command=self.browse_folder).grid(column=4, row=0, padx=6)
+        topf.columnconfigure(1, weight=1)
+
+        ttk.Label(topf, text="n8n Benutzer:").grid(column=0, row=1, sticky=tk.W, padx=6, pady=4)
+        self.n8n_user = tk.StringVar(value=DEFAULT_N8N_USER)
+        ttk.Entry(topf, textvariable=self.n8n_user, width=20).grid(column=1, row=1, sticky=tk.W, padx=6)
+        ttk.Label(topf, text="n8n Passwort:").grid(column=2, row=1, sticky=tk.W, padx=6)
+        self.n8n_pass = tk.StringVar(value=DEFAULT_N8N_PASS)
+        ttk.Entry(topf, textvariable=self.n8n_pass, width=20, show="*").grid(column=3, row=1, sticky=tk.W, padx=6)
+
+        portf = ttk.LabelFrame(topf, text="🔌 Port-Konfiguration")
+        portf.grid(column=0, row=2, columnspan=5, sticky=tk.EW, padx=6, pady=8)
+        # ... (Ports bleiben gleich)
+        self.n8n_port = tk.IntVar(value=DEFAULT_N8N_PORT)
+        self.ollama_port = tk.IntVar(value=DEFAULT_OLLAMA_PORT)
+        self.vision_port = tk.IntVar(value=DEFAULT_VISION_PORT)
+        self.kyutai_port = tk.IntVar(value=DEFAULT_KYUTAI_PORT)
+        self.searxng_port = tk.IntVar(value=DEFAULT_SEARXNG_PORT)
+        self.stablediffusion_port = tk.IntVar(value=DEFAULT_STABLEDIFFUSION_PORT)
+        port_configs = [
+            ("n8n:", self.n8n_port), ("Ollama:", self.ollama_port), ("Vision:", self.vision_port),
+            ("Kyutai:", self.kyutai_port), ("SearxNG:", self.searxng_port), ("Stable Diffusion:", self.stablediffusion_port)
+        ]
+        for i, (label, var) in enumerate(port_configs):
+            ttk.Label(portf, text=label).grid(column=i*2, row=0, sticky=tk.W, padx=(10,2))
+            ttk.Entry(portf, textvariable=var, width=7).grid(column=i*2+1, row=0, sticky=tk.W, padx=(0,10))
+        portf.columnconfigure(12, weight=1) # Spacer
+        ttk.Button(portf, text="Reset", command=self.reset_ports).grid(column=13, row=0, padx=10, sticky=tk.E)
+
+        mgmtf = ttk.LabelFrame(left_frame, text="🎛️ Management & Tests")
+        mgmtf.pack(fill=tk.X, padx=8, pady=6)
+        # ... (Management-Buttons bleiben gleich)
+        mgmt_buttons_config = [
+            ("🛑 Docker Stop", self.docker_down), ("📋 Logs streamen", self.stream_logs),
+            ("⏹️ Logs stoppen", self.stop_logs), ("📊 Docker Status", self.docker_status),
+            ("🧪 Endpunkte testen", self.test_endpoints), ("📥 Ollama Modell Pull", self.ollama_pull_dialog),
+            ("📤 n8n Workflow import", self.import_n8n_workflow_dialog), ("🌐 Open n8n", self.open_n8n),
+            ("🖼️ Open Stable Diffusion", self.open_stablediffusion), ("📁 Projektordner", self.open_project_dir),
+            ("🔍 SearxNG Info", self.show_searx_info)
+        ]
+        for i, (text, command) in enumerate(mgmt_buttons_config):
+            is_threaded = text not in ["📥 Ollama Modell Pull", "⏹️ Logs stoppen", "🌐 Open n8n", "🖼️ Open Stable Diffusion", "📁 Projektordner"]
+            btn_command = self.threaded(command) if is_threaded else command
+            btn = ttk.Button(mgmtf, text=text, command=btn_command)
+            btn.grid(column=i % 4, row=i // 4, padx=4, pady=4, sticky="ew")
+        for i in range(4): mgmtf.columnconfigure(i, weight=1)
+
+        logf = ttk.LabelFrame(left_frame, text="📝 Status & Logs")
+        logf.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+        self.logbox = scrolledtext.ScrolledText(logf, wrap=tk.WORD, height=15, bg="#2b2b2b", fg="white", insertbackground="white")
+        self.logbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        self.logbox.tag_config("info", foreground="#a9b7c6")
+        self.logbox.tag_config("ok", foreground="#6a8759")
+        self.logbox.tag_config("error", foreground="#ff6b68")
+        self.logbox.tag_config("warning", foreground="#cc7832")
+        self.logbox.tag_config("out", foreground="#d3d3d3")
+
+        # --- Rechter Frame ---
+        self.dashboard_frame = ttk.LabelFrame(right_frame, text="💻 System-Dashboard")
+        self.dashboard_frame.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
+
+        # --- Initialisierungslogik ---
+        self._stop_logs = threading.Event()
+        self.log("🚀 Willkommen zum Local KI Setup Tool v2.2", tag="info")
+        
+        self.system_monitor = None
+        if PSUTIL_OK and MATPLOTLIB_OK:
+            self.setup_dashboard()
+            self.system_monitor = SystemMonitor(self.update_dashboard_widgets)
+            self.threaded(self.system_monitor.start)()
+        else:
+            ttk.Label(self.dashboard_frame, text="Dashboard deaktiviert.\n\nModule nicht gefunden:\npsutil, pynvml, matplotlib", justify=tk.CENTER).pack(pady=50)
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.process_log_queue()
+
+    def process_log_queue(self):
+        try:
+            while not self.log_queue.empty():
+                text, tag = self.log_queue.get_nowait()
+                self.logbox.configure(state=tk.NORMAL)
+                if not text.endswith("\n"): text += "\n"
+                self.logbox.insert(tk.END, text, tag)
+                self.logbox.see(tk.END)
+                self.logbox.configure(state=tk.DISABLED)
+        except Exception: pass
+        finally:
+            self.root.after(100, self.process_log_queue)
+
+    def log(self, text, tag="info"):
+        self.log_queue.put((text, tag))
+
+    def on_closing(self):
+        if self.system_monitor: self.system_monitor.stop()
+        self.root.destroy()
+
+    def setup_dashboard(self):
+        self.dashboard_frame.columnconfigure(0, weight=1)
+        self.dashboard_frame.rowconfigure(0, weight=1)
+        try:
+            rgb_16bit = self.root.winfo_rgb(self.root.cget('bg'))
+            r, g, b = (c >> 8 for c in rgb_16bit)
+            bg_color = f'#{r:02x}{g:02x}{b:02x}'
+        except tk.TclError:
+            bg_color = "#f0f0f0"
+
+        # KORREKTUR: Dezenteres Design
+        self.fig = Figure(figsize=(4, 6), dpi=90, facecolor=bg_color)
+        self.fig.subplots_adjust(left=0.3, right=0.9, top=0.9, bottom=0.1, hspace=0.6)
+
+        self.ax_cpu = self.fig.add_subplot(3, 1, 1)
+        self.ax_ram = self.fig.add_subplot(3, 1, 2)
+        self.ax_gpu = self.fig.add_subplot(3, 1, 3)
+        
+        for ax in [self.ax_cpu, self.ax_ram, self.ax_gpu]:
+            ax.set_facecolor(bg_color)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.dashboard_frame)
+        self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew", pady=5)
+
+        text_info_frame = ttk.Frame(self.dashboard_frame)
+        text_info_frame.grid(row=1, column=0, sticky="ew", pady=5, padx=10)
+        
+        self.disk_label = ttk.Label(text_info_frame, text="Disk: --", font=("Segoe UI", 9))
+        self.disk_label.pack(fill=tk.X)
+        self.net_label = ttk.Label(text_info_frame, text="Netzwerk: --", font=("Segoe UI", 9))
+        self.net_label.pack(fill=tk.X)
+
+    def update_dashboard_widgets(self, data):
+        if not data or not hasattr(self, 'canvas'): return
+
+        font_props = {'fontsize': 9, 'fontweight': 'light'}
+        title_props = {'fontsize': 10, 'fontweight': 'normal'}
+
+        # --- CPU Plot ---
+        self.ax_cpu.clear()
+        cpu_percent = data.get('cpu_percent', 0)
+        cpu_temp = data.get('cpu_temp', 'N/A')
+        cpu_temp_str = f"{cpu_temp:.0f}°C" if isinstance(cpu_temp, (int, float)) else cpu_temp
+        self.ax_cpu.barh(["CPU"], [cpu_percent], color='#569cd6', height=0.5)
+        self.ax_cpu.set_title(f"CPU Auslastung", loc='left', **title_props)
+        self.ax_cpu.text(cpu_percent + 2, 0, f"{cpu_percent:.1f}% | {cpu_temp_str}", va='center', ha='left', **font_props)
+        
+        # --- RAM Plot ---
+        self.ax_ram.clear()
+        ram_percent = data.get('ram_percent', 0)
+        self.ax_ram.barh(["RAM"], [ram_percent], color='#4ec9b0', height=0.5)
+        self.ax_ram.set_title(f"RAM: {data.get('ram_used', 0):.1f} / {data.get('ram_total', 0):.1f} GB", loc='left', **title_props)
+        self.ax_ram.text(ram_percent + 2, 0, f"{ram_percent:.1f}%", va='center', ha='left', **font_props)
+
+        # --- GPU Plot ---
+        self.ax_gpu.clear()
+        if data.get("gpu_name"):
+            gpu_util = data.get("gpu_util", 0) or 0
+            gpu_mem_percent = data.get("gpu_mem_percent", 0) or 0
+            gpu_temp = data.get('gpu_temp', 'N/A')
+            gpu_temp_str = f"{gpu_temp}°C" if isinstance(gpu_temp, (int, float)) else gpu_temp
+            
+            self.ax_gpu.barh(["VRAM", "GPU"], [gpu_mem_percent, gpu_util], color=['#d16969', '#ce9178'], height=0.6)
+            self.ax_gpu.set_title(f"GPU: {data['gpu_name']}", loc='left', **title_props)
+            self.ax_gpu.text(gpu_mem_percent + 2, 0, f"{data.get('gpu_mem_used', 0)}/{data.get('gpu_mem_total', 0)} MB ({gpu_mem_percent}%)", va='center', ha='left', **font_props)
+            self.ax_gpu.text(gpu_util + 2, 1, f"{gpu_util}% | {gpu_temp_str}", va='center', ha='left', **font_props)
+        else:
+            self.ax_gpu.barh(["GPU"], [0], color='grey', height=0.5)
+            self.ax_gpu.set_title("GPU: Nicht verfügbar", loc='left', **title_props)
+        
+        for ax in [self.ax_cpu, self.ax_ram, self.ax_gpu]:
+            ax.set_xlim(0, 105)
+            ax.tick_params(axis='y', length=0, labelsize=9)
+            ax.tick_params(axis='x', length=0, labelsize=0) # X-Achse ausblenden
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.spines['left'].set_color('#bbbbbb')
+
+        # Text-Labels aktualisieren
+        self.disk_label.config(text=f"💾 Disk: {data.get('disk_used', 0):.1f}/{data.get('disk_total', 0):.1f} GB ({data.get('disk_percent', 0):.1f}%)")
+        self.net_label.config(text=f"🌐 Netz: ↓ {data.get('net_down', 0):.2f} MB/s | ↑ {data.get('net_up', 0):.2f} MB/s")
+
+        self.canvas.draw()
 
         # Projektordner
         ttk.Label(topf, text="Projektordner:").grid(column=0, row=0, sticky=tk.W, padx=6, pady=4)
@@ -283,19 +598,20 @@ class AllInOneGUI:
         return wrapper
 
     def get_docker_compose_content(self):
-            """Generiert docker-compose.yml Inhalt mit aktuellen Port-Einstellungen - VISION SERVICE FIX"""
-            # Port-Werte als Variablen für saubere String-Formatierung
-            n8n_port = self.n8n_port.get()
-            ollama_port = self.ollama_port.get()
-            vision_port = self.vision_port.get()
-            kyutai_port = self.kyutai_port.get()
-            searxng_port = self.searxng_port.get()
-            stablediffusion_port = self.stablediffusion_port.get()
-            n8n_user = self.n8n_user.get()
-            n8n_pass = self.n8n_pass.get()
-            
-            # Verwende .format() statt f-strings um Konflikte mit geschweiften Klammern zu vermeiden
-            return """services:
+        """Generiert docker-compose.yml Inhalt mit aktuellen Port-Einstellungen - VISION SERVICE FIX"""
+        # Port-Werte als Variablen für saubere String-Formatierung
+        n8n_port = self.n8n_port.get()
+        ollama_port = self.ollama_port.get()
+        vision_port = self.vision_port.get()
+        kyutai_port = self.kyutai_port.get()
+        searxng_port = self.searxng_port.get()
+        stablediffusion_webui_port = self.stablediffusion_port.get()
+        stablediffusion_api_port = stablediffusion_webui_port - 1
+        n8n_user = self.n8n_user.get()
+        n8n_pass = self.n8n_pass.get()
+        
+        # KORREKTUR: Alle Dictionaries in den generierten Python-Skripten müssen mit doppelten Klammern {{...}} versehen werden.
+        return """services:
           postgres:
             image: postgres:15
             restart: unless-stopped
@@ -313,7 +629,6 @@ class AllInOneGUI:
               - "{ollama_port}:11434"
             volumes:
               - ./ollama_data:/root/.ollama
-            # GPU Support für NVIDIA GPUs (erfordert Docker Desktop + WSL2 + nvidia-docker)
             deploy:
               resources:
                 reservations:
@@ -326,16 +641,17 @@ class AllInOneGUI:
               - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
           stable-diffusion:
-            image: continuumio/miniconda3
+            image: python:3.11-slim
             restart: unless-stopped
             working_dir: /app
             volumes:
               - ./sd_data:/app/data
-              - ./sd_models:/app/models          # Persistente Modell-Speicherung
-              - ./sd_outputs:/app/outputs        # Generierte Bilder
-              - ./sd_cache:/root/.cache          # Cache für Downloads
+              - ./sd_models:/app/models
+              - ./sd_outputs:/app/outputs
+              - ./sd_cache:/root/.cache
             ports:
-              - "{stablediffusion_port}:7860"
+              - "{stablediffusion_webui_port}:7861"
+              - "{stablediffusion_api_port}:7860"
             environment:
               - TORCH_HOME=/app/models/torch
               - HF_HOME=/app/models/huggingface
@@ -343,7 +659,8 @@ class AllInOneGUI:
               - DIFFUSERS_CACHE=/app/models/diffusers
               - PYTHONDONTWRITEBYTECODE=1
               - PIP_CACHE_DIR=/root/.cache/pip
-            # GPU Support auch für Stable Diffusion
+              - GRADIO_SERVER_NAME=0.0.0.0
+              - GRADIO_SERVER_PORT=7861
             deploy:
               resources:
                 reservations:
@@ -355,37 +672,31 @@ class AllInOneGUI:
               - bash
               - -c
               - |
-                # Erstelle persistente Verzeichnisse
                 mkdir -p /app/models/torch /app/models/huggingface /app/models/transformers /app/models/diffusers
                 mkdir -p /app/outputs /root/.cache/pip
-                
-                # System-Dependencies installieren
                 apt-get update && apt-get install -y git wget curl && rm -rf /var/lib/apt/lists/*
-                
-                # Python Dependencies installieren
                 pip install --upgrade pip --cache-dir=/root/.cache/pip
                 pip install --cache-dir=/root/.cache/pip torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-                pip install --cache-dir=/root/.cache/pip diffusers transformers accelerate safetensors
-                pip install --cache-dir=/root/.cache/pip fastapi uvicorn python-multipart pillow
+                pip install --cache-dir=/root/.cache/pip diffusers transformers accelerate safetensors gradio pillow numpy scipy fastapi uvicorn python-multipart
                 
-                # Stable Diffusion API Server erstellen
                 cat > server.py << 'PYEOF'
+                import gradio as gr
+                from diffusers import StableDiffusionPipeline, DPMSolverMultistepScheduler
+                import torch
+                from PIL import Image
+                import os
+                from datetime import datetime
+                import uuid
                 from fastapi import FastAPI, HTTPException
                 from fastapi.responses import FileResponse
                 from pydantic import BaseModel
-                from diffusers import StableDiffusionPipeline
-                import torch
-                import os
-                from PIL import Image
-                import uuid
-                from datetime import datetime
                 import uvicorn
                 from contextlib import asynccontextmanager
+                import threading
                 
-                # Globale Variablen
                 pipe = None
                 
-                class GenerateRequest(BaseModel):
+                class GenerateRequest(BaseModel ):
                     prompt: str
                     negative_prompt: str = ""
                     width: int = 512
@@ -393,103 +704,83 @@ class AllInOneGUI:
                     num_inference_steps: int = 20
                     guidance_scale: float = 7.5
                     seed: int = -1
+                    num_images: int = 1
+                
+                def load_model():
+                    global pipe
+                    try:
+                        print("🎨 Lade Stable Diffusion Modell...")
+                        device = "cuda" if torch.cuda.is_available() else "cpu"
+                        print(f"🖥️ Device: {{device}}")
+                        model_id = "runwayml/stable-diffusion-v1-5"
+                        cache_dir = "/app/models/diffusers"
+                        pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16 if device == "cuda" else torch.float32, cache_dir=cache_dir, local_files_only=False)
+                        pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
+                        if device == "cuda":
+                            pipe = pipe.to("cuda")
+                            pipe.enable_attention_slicing()
+                            pipe.enable_vae_slicing()
+                            try:
+                                pipe.enable_xformers_memory_efficient_attention()
+                                print("✅ xFormers aktiviert für bessere Performance")
+                            except:
+                                print("ℹ️ xFormers nicht verfügbar, verwende Standard-Attention")
+                        print("✅ Stable Diffusion bereit!")
+                        return True
+                    except Exception as e:
+                        print(f"❌ Fehler beim Laden des Modells: {{e}}")
+                        return False
+                
+                def generate_image(prompt, negative_prompt="", num_inference_steps=20, guidance_scale=7.5, width=512, height=512, seed=-1, num_images=1):
+                    if pipe is None: return None, "❌ Modell nicht geladen! Bitte warten...", []
+                    try:
+                        if seed == -1: seed = torch.randint(0, 2**32, (1,)).item()
+                        generator = torch.Generator(device=pipe.device).manual_seed(seed)
+                        images, filenames = [], []
+                        for i in range(num_images):
+                            print(f"🎨 Generiere Bild {{i+1}}/{{num_images}}: '{{prompt[:50]}}...'")
+                            result = pipe(prompt=prompt, negative_prompt=negative_prompt, width=width, height=height, num_inference_steps=num_inference_steps, guidance_scale=guidance_scale, generator=generator if i == 0 else torch.Generator(device=pipe.device).manual_seed(seed + i))
+                            image = result.images[0]
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            filename = f"{{timestamp}}_{{str(uuid.uuid4())[:8]}}.png"
+                            output_path = f"/app/outputs/{{filename}}"
+                            os.makedirs("/app/outputs", exist_ok=True)
+                            image.save(output_path)
+                            print(f"✅ Bild gespeichert: {{filename}}")
+                            images.append(image)
+                            filenames.append(filename)
+                        info = f"✅ Seed: {{seed}} | Steps: {{num_inference_steps}} | CFG: {{guidance_scale}}"
+                        return images, info, filenames
+                    except Exception as e:
+                        print(f"❌ Generierungsfehler: {{e}}")
+                        return None, f"❌ Fehler: {{str(e)}}", []
+                
+                def list_saved_images():
+                    outputs_dir = "/app/outputs"
+                    if not os.path.exists(outputs_dir): return []
+                    images = []
+                    for file in sorted(os.listdir(outputs_dir), reverse=True)[:20]:
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            file_path = os.path.join(outputs_dir, file)
+                            try: images.append(Image.open(file_path))
+                            except: pass
+                    return images
                 
                 @asynccontextmanager
                 async def lifespan(app: FastAPI):
-                    global pipe
-                    
-                    try:
-                        print("🎨 Lade Stable Diffusion Modell...")
-                        
-                        # Prüfe GPU-Verfügbarkeit
-                        device = "cuda" if torch.cuda.is_available() else "cpu"
-                        print(f"🖥️ Device: {{device}}")
-                        
-                        # Lade vortrainiertes Modell (wird automatisch gecacht)
-                        model_id = "runwayml/stable-diffusion-v1-5"
-                        cache_dir = "/app/models/diffusers"
-                        
-                        # Erstelle Pipeline mit Caching
-                        pipe = StableDiffusionPipeline.from_pretrained(
-                            model_id,
-                            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-                            cache_dir=cache_dir,
-                            local_files_only=False  # Erlaube Download beim ersten Start
-                        )
-                        
-                        if device == "cuda":
-                            pipe = pipe.to("cuda")
-                            # Memory-Optimierung für GPU
-                            pipe.enable_attention_slicing()
-                            pipe.enable_sequential_cpu_offload()
-                        
-                        print("✅ Stable Diffusion bereit!")
-                        print(f"💾 Modelle gecacht in: {{cache_dir}}")
-                        
-                    except Exception as e:
-                        print(f"❌ Fehler beim Laden des Stable Diffusion Modells: {{e}}")
-                        print("🔧 Hinweis: Beim ersten Start kann der Download mehrere Minuten dauern")
-                        raise
-                    
+                    print("🚀 Starte FastAPI...")
                     yield
-                    
-                    # Cleanup
-                    print("👋 Stable Diffusion Service wird beendet")
+                    print("👋 FastAPI wird beendet")
                 
                 app = FastAPI(title="Stable Diffusion API", lifespan=lifespan)
                 
                 @app.post("/generate")
-                async def generate_image(request: GenerateRequest):
-                    if pipe is None:
-                        raise HTTPException(status_code=503, detail="Model not loaded")
-                    
+                async def generate_image_api(request: GenerateRequest):
+                    if pipe is None: raise HTTPException(status_code=503, detail="Model not loaded")
                     try:
-                        # Seed setzen für Reproduzierbarkeit
-                        if request.seed == -1:
-                            seed = torch.randint(0, 2**32, (1,)).item()
-                        else:
-                            seed = request.seed
-                        
-                        generator = torch.Generator(device=pipe.device).manual_seed(seed)
-                        
-                        # Bild generieren
-                        print(f"🎨 Generiere: '{{request.prompt[:50]}}...'")
-                        
-                        result = pipe(
-                            prompt=request.prompt,
-                            negative_prompt=request.negative_prompt,
-                            width=request.width,
-                            height=request.height,
-                            num_inference_steps=request.num_inference_steps,
-                            guidance_scale=request.guidance_scale,
-                            generator=generator
-                        )
-                        
-                        # Bild speichern
-                        image = result.images[0]
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        filename = f"{{timestamp}}_{{str(uuid.uuid4())[:8]}}.png"
-                        output_path = f"/app/outputs/{{filename}}"
-                        
-                        os.makedirs("/app/outputs", exist_ok=True)
-                        image.save(output_path)
-                        
-                        print(f"✅ Bild gespeichert: {{filename}}")
-                        
-                        return {{
-                            "status": "success",
-                            "filename": filename,
-                            "seed": seed,
-                            "prompt": request.prompt,
-                            "url": f"/image/{{filename}}",
-                            "parameters": {{
-                                "width": request.width,
-                                "height": request.height,
-                                "steps": request.num_inference_steps,
-                                "guidance_scale": request.guidance_scale
-                            }}
-                        }}
-                        
+                        images, info, filenames = generate_image(prompt=request.prompt, negative_prompt=request.negative_prompt, num_inference_steps=request.num_inference_steps, guidance_scale=request.guidance_scale, width=request.width, height=request.height, seed=request.seed, num_images=request.num_images)
+                        if images is None: raise HTTPException(status_code=500, detail=info)
+                        return {{"status": "success", "filenames": filenames, "seed": request.seed if request.seed != -1 else torch.randint(0, 2**32, (1,)).item(), "prompt": request.prompt, "urls": [f"/image/{{filename}}" for filename in filenames], "parameters": {{"width": request.width, "height": request.height, "steps": request.num_inference_steps, "guidance_scale": request.guidance_scale}}, "info": info}}
                     except Exception as e:
                         print(f"❌ Generierungsfehler: {{e}}")
                         raise HTTPException(status_code=500, detail=f"Generation failed: {{str(e)}}")
@@ -497,87 +788,80 @@ class AllInOneGUI:
                 @app.get("/image/{{filename}}")
                 async def get_image(filename: str):
                     file_path = f"/app/outputs/{{filename}}"
-                    if not os.path.exists(file_path):
-                        raise HTTPException(status_code=404, detail="Image not found")
+                    if not os.path.exists(file_path): raise HTTPException(status_code=404, detail="Image not found")
                     return FileResponse(file_path, media_type="image/png")
                 
                 @app.get("/images")
                 async def list_images():
                     outputs_dir = "/app/outputs"
-                    if not os.path.exists(outputs_dir):
-                        return {{"images": [], "count": 0}}
-                    
+                    if not os.path.exists(outputs_dir): return {{"images": [], "count": 0}}
                     images = []
                     for file in os.listdir(outputs_dir):
                         if file.lower().endswith(('.png', '.jpg', '.jpeg')):
                             file_path = os.path.join(outputs_dir, file)
                             stat = os.stat(file_path)
-                            images.append({{
-                                "filename": file,
-                                "url": f"/image/{{file}}",
-                                "size": stat.st_size,
-                                "created": datetime.fromtimestamp(stat.st_ctime).isoformat()
-                            }})
-                    
-                    # Sortiere nach Erstellungsdatum (neueste zuerst)
+                            images.append({{"filename": file, "url": f"/image/{{file}}", "size": stat.st_size, "created": datetime.fromtimestamp(stat.st_ctime).isoformat()}})
                     images.sort(key=lambda x: x["created"], reverse=True)
-                    
                     return {{"images": images, "count": len(images)}}
                 
                 @app.get("/health")
                 async def health():
                     model_info = {{}}
                     cache_dir = "/app/models/diffusers"
-                    
                     if os.path.exists(cache_dir):
-                        cached_models = os.listdir(cache_dir)
-                        model_info["cached_models"] = len(cached_models)
-                        
-                        total_size = 0
-                        for root, dirs, files in os.walk(cache_dir):
-                            for file in files:
-                                total_size += os.path.getsize(os.path.join(root, file))
+                        model_info["cached_models"] = len(os.listdir(cache_dir))
+                        total_size = sum(os.path.getsize(os.path.join(root, file)) for root, _, files in os.walk(cache_dir) for file in files)
                         model_info["cache_size_mb"] = total_size // (1024*1024)
-                    
-                    outputs_dir = "/app/outputs"
-                    output_info = {{
-                        "total_images": len([f for f in os.listdir(outputs_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]) if os.path.exists(outputs_dir) else 0
-                    }}
-                    
-                    return {{
-                        "status": "healthy",
-                        "model_loaded": pipe is not None,
-                        "device": "cuda" if torch.cuda.is_available() else "cpu",
-                        "gpu_available": torch.cuda.is_available(),
-                        "model_info": model_info,
-                        "output_info": output_info,
-                        "service": "stable-diffusion"
-                    }}
+                    output_info = {{"total_images": len([f for f in os.listdir("/app/outputs") if f.lower().endswith(('.png', '.jpg', '.jpeg'))]) if os.path.exists("/app/outputs") else 0}}
+                    return {{"status": "healthy", "model_loaded": pipe is not None, "device": "cuda" if torch.cuda.is_available() else "cpu", "gpu_available": torch.cuda.is_available(), "model_info": model_info, "output_info": output_info, "service": "stable-diffusion"}}
                 
                 @app.get("/")
                 async def root():
-                    device_info = {{
-                        "device": "cuda" if torch.cuda.is_available() else "cpu",
-                        "cuda_available": torch.cuda.is_available()
-                    }}
-                    
+                    device_info = {{"device": "cuda" if torch.cuda.is_available() else "cpu", "cuda_available": torch.cuda.is_available()}}
                     if torch.cuda.is_available():
                         device_info["gpu_name"] = torch.cuda.get_device_name(0)
                         device_info["gpu_memory"] = f"{{torch.cuda.get_device_properties(0).total_memory // (1024**3)}} GB"
-                    
-                    return {{
-                        "message": "Stable Diffusion API",
-                        "endpoints": ["/generate", "/image/<filename>", "/images", "/health"],
-                        "device_info": device_info,
-                        "model_status": "loaded" if pipe else "not loaded",
-                        "persistent_storage": "/app/models and /app/outputs mounted"
-                    }}
+                    return {{"message": "Stable Diffusion API", "endpoints": ["/generate", "/image/<filename>", "/images", "/health"], "device_info": device_info, "model_status": "loaded" if pipe else "not loaded", "persistent_storage": "/app/models and /app/outputs mounted"}}
+                
+                def start_gradio():
+                    model_loaded = load_model()
+                    with gr.Blocks(title="Stable Diffusion WebUI", theme=gr.themes.Soft()) as demo:
+                        gr.Markdown("# 🎨 Stable Diffusion WebUI")
+                        with gr.Row():
+                            with gr.Column(scale=3):
+                                prompt = gr.Textbox(label="Prompt", placeholder="Beschreibe was du sehen möchtest...", lines=3)
+                                negative_prompt = gr.Textbox(label="Negative Prompt", placeholder="Was NICHT im Bild sein soll...", lines=2)
+                                with gr.Row():
+                                    with gr.Column():
+                                        steps = gr.Slider(minimum=1, maximum=50, value=20, step=1, label="Sampling Steps")
+                                        guidance = gr.Slider(minimum=1, maximum=20, value=7.5, step=0.5, label="CFG Scale")
+                                    with gr.Column():
+                                        width = gr.Slider(minimum=256, maximum=1024, value=512, step=64, label="Breite")
+                                        height = gr.Slider(minimum=256, maximum=1024, value=512, step=64, label="Höhe")
+                                with gr.Row():
+                                    seed = gr.Number(value=-1, label="Seed (-1 für zufällig)", precision=0)
+                                    num_images = gr.Slider(minimum=1, maximum=4, value=1, step=1, label="Anzahl Bilder")
+                                generate_btn = gr.Button("🎨 Generieren", variant="primary", size="lg")
+                            with gr.Column(scale=4):
+                                output_gallery = gr.Gallery(label="Generierte Bilder", show_label=True, elem_id="gallery", columns=2, rows=2, object_fit="contain", height="auto")
+                                output_info = gr.Textbox(label="Info", interactive=False)
+                        with gr.Row(): gr.Markdown("### 📁 Zuletzt generierte Bilder")
+                        with gr.Row(): history_gallery = gr.Gallery(label="Verlauf", show_label=False, elem_id="history", columns=5, rows=2, object_fit="contain", height="auto", value=list_saved_images())
+                        with gr.Row(): gr.Examples(examples=[["a beautiful sunset over mountains, golden hour, photorealistic", "blurry, low quality"],["cute robot playing guitar, digital art, colorful", "realistic, photo"],["magical forest with glowing mushrooms, fantasy art", "dark, scary"],["cyberpunk city at night, neon lights, rain", "daylight, sunny"],["portrait of a wizard, detailed, oil painting style", "modern, photograph"]], inputs=[prompt, negative_prompt], label="Beispiel-Prompts")
+                        generate_btn.click(fn=generate_image, inputs=[prompt, negative_prompt, steps, guidance, width, height, seed, num_images], outputs=[output_gallery, output_info, gr.State()]).then(fn=list_saved_images, inputs=[], outputs=[history_gallery])
+                        if model_loaded:
+                            device = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
+                            gr.Markdown(f"✅ **Modell geladen** | Device: {{device}}")
+                        else:
+                            gr.Markdown("⏳ **Modell lädt...** Bitte warten...")
+                    print("🚀 Starte Gradio WebUI auf Port 7861...")
+                    demo.launch(server_name="0.0.0.0", server_port=7861, share=False, show_error=True)
                 
                 if __name__ == '__main__':
-                    uvicorn.run(app, host='0.0.0.0', port=7860)
+                    threading.Thread(target=lambda: uvicorn.run(app, host='0.0.0.0', port=7860), daemon=True).start()
+                    start_gradio()
                 PYEOF
-                
-                echo "🎨 Starte Stable Diffusion Service..."
+                echo "🎨 Starte Stable Diffusion Service (WebUI + API)..."
                 python server.py
 
           vision:
@@ -586,39 +870,28 @@ class AllInOneGUI:
             working_dir: /app
             volumes:
               - ./vision_data:/app/data
-              - ./vision_models:/app/models     # Persistente Modell-Speicherung
-              - ./vision_cache:/root/.cache     # Cache für pip/torch Downloads
+              - ./vision_models:/app/models
+              - ./vision_cache:/root/.cache
             ports:
               - "{vision_port}:8000"
             environment:
-              - TORCH_HOME=/app/models/torch    # PyTorch Modelle hier speichern
-              - YOLO_CONFIG_DIR=/app/models/yolo # YOLO Modelle hier speichern
-              - HF_HOME=/app/models/huggingface  # Hugging Face Modelle hier
+              - TORCH_HOME=/app/models/torch
+              - YOLO_CONFIG_DIR=/app/models/yolo
+              - HF_HOME=/app/models/huggingface
               - TRANSFORMERS_CACHE=/app/models/transformers
               - TORCH_EXTENSIONS_DIR=/app/models/torch_extensions
-              - PYTHONDONTWRITEBYTECODE=1       # Keine .pyc Dateien
-              - PIP_CACHE_DIR=/root/.cache/pip  # Pip Cache persistent
+              - PYTHONDONTWRITEBYTECODE=1
+              - PIP_CACHE_DIR=/root/.cache/pip
             command:
               - bash
               - -c
               - |
-                # Erstelle persistente Verzeichnisse
                 mkdir -p /app/models/torch /app/models/yolo /app/models/huggingface /app/models/transformers /app/models/torch_extensions
                 mkdir -p /root/.cache/pip /root/.cache/torch
-                
-                # System-Dependencies installieren
-                apt-get update && apt-get install -y \\
-                  libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 \\
-                  wget curl git && rm -rf /var/lib/apt/lists/*
-                
-                # Python Dependencies installieren (nur wenn nicht schon vorhanden)
+                apt-get update && apt-get install -y libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1 wget curl git && rm -rf /var/lib/apt/lists/*
                 pip install --upgrade pip --cache-dir=/root/.cache/pip
-                pip install --cache-dir=/root/.cache/pip \\
-                  torch torchvision --index-url https://download.pytorch.org/whl/cu118
-                pip install --cache-dir=/root/.cache/pip \\
-                  fastapi uvicorn pillow opencv-python-headless ultralytics python-multipart
-                
-                # Server Code erstellen - MIT ROBUSTER MODELL-VALIDIERUNG
+                pip install --cache-dir=/root/.cache/pip torch torchvision --index-url https://download.pytorch.org/whl/cu118
+                pip install --cache-dir=/root/.cache/pip fastapi uvicorn pillow opencv-python-headless ultralytics python-multipart
                 cat > server.py << 'PYEOF'
                 from fastapi import FastAPI, UploadFile, File
                 from ultralytics import YOLO
@@ -628,66 +901,37 @@ class AllInOneGUI:
                 import os
                 import shutil
                 from contextlib import asynccontextmanager
-                
-                # Globale Variablen
                 model = None
-                
-                def validate_model_file(model_path):
-                    
-                    if not os.path.exists(model_path):
-                        return False, "Datei nicht gefunden"
-                    
-                    # Prüfe Dateigröße (YOLO v8n sollte ~6MB sein)
+                def validate_model_file(model_path ):
+                    if not os.path.exists(model_path): return False, "Datei nicht gefunden"
                     size = os.path.getsize(model_path)
-                    if size < 1000000:  # Weniger als 1MB = definitiv defekt
-                        return False, f"Datei zu klein: {{size}} bytes"
-                    
-                    # Versuche Modell-Header zu lesen (PyTorch .pt Format)
+                    if size < 1000000: return False, f"Datei zu klein: {{size}} bytes"
                     try:
                         import torch
-                        # Lade nur Header ohne komplettes Modell
                         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
-                        
-                        # Prüfe ob notwendige Keys vorhanden sind
                         if isinstance(checkpoint, dict):
-                            if 'model' in checkpoint or 'state_dict' in checkpoint:
-                                return True, "Valid PyTorch checkpoint"
-                            else:
-                                return False, f"Missing required keys. Found: {{list(checkpoint.keys())}}"
-                        else:
-                            return False, f"Unexpected checkpoint type: {{type(checkpoint)}}"
-                            
-                    except Exception as e:
-                        return False, f"PyTorch load error: {{str(e)}}"
-                
+                            if 'model' in checkpoint or 'state_dict' in checkpoint: return True, "Valid PyTorch checkpoint"
+                            else: return False, f"Missing required keys. Found: {{list(checkpoint.keys())}}"
+                        else: return False, f"Unexpected checkpoint type: {{type(checkpoint)}}"
+                    except Exception as e: return False, f"PyTorch load error: {{str(e)}}"
                 def safe_remove_file(file_path):
-                    
                     try:
                         if os.path.exists(file_path):
                             os.remove(file_path)
                             return True
-                    except:
-                        pass
+                    except: pass
                     return False
-                
                 @asynccontextmanager
                 async def lifespan(app: FastAPI):
-                    # Startup
                     global model
-                    
-                    # Definiere Pfade
                     model_cache_dir = '/app/models/yolo'
                     model_file = 'yolov8n.pt'
                     cached_model_path = f'{{model_cache_dir}}/{{model_file}}'
-                    
                     os.makedirs(model_cache_dir, exist_ok=True)
-                    
                     try:
-                        # SCHRITT 1: Prüfe cached Modell
                         if os.path.exists(cached_model_path):
                             print(f"🔍 Prüfe cached Modell: {{cached_model_path}}")
                             print(f"📊 Modell-Größe: {{os.path.getsize(cached_model_path) // (1024*1024)}} MB")
-                            
                             is_valid, reason = validate_model_file(cached_model_path)
                             if is_valid:
                                 print("✅ Cached Modell ist gültig")
@@ -698,181 +942,97 @@ class AllInOneGUI:
                                     return
                                 except Exception as load_error:
                                     print(f"❌ Fehler beim Laden des cached Modells: {{load_error}}")
-                                    # Cache bereinigen
-                                    if safe_remove_file(cached_model_path):
-                                        print("🗑️ Defektes cached Modell entfernt")
+                                    if safe_remove_file(cached_model_path): print("🗑️ Defektes cached Modell entfernt")
                             else:
                                 print(f"❌ Cached Modell defekt: {{reason}}")
-                                if safe_remove_file(cached_model_path):
-                                    print("🗑️ Defektes cached Modell entfernt")
-                        
-                        # SCHRITT 2: Lade Modell neu herunter
+                                if safe_remove_file(cached_model_path): print("🗑️ Defektes cached Modell entfernt")
                         print("📥 Lade YOLO-Modell frisch herunter...")
-                        model = YOLO(model_file)  # Lädt automatisch herunter
-                        
-                        # SCHRITT 3: Finde und cache das heruntergeladene Modell
-                        yolo_cache_paths = [
-                            f'/root/.config/Ultralytics/{{model_file}}',
-                            f'/root/.ultralytics/{{model_file}}',
-                            f'/app/{{model_file}}',
-                            f'./{{model_file}}'
-                        ]
-                        
-                        # Zusätzlich: Durchsuche alle möglichen Verzeichnisse
+                        model = YOLO(model_file)
+                        yolo_cache_paths = [f'/root/.config/Ultralytics/{{model_file}}', f'/root/.ultralytics/{{model_file}}', f'/app/{{model_file}}', f'./{{model_file}}']
                         search_dirs = ['/root/.config', '/root/.ultralytics', '/app', '.']
                         for search_dir in search_dirs:
                             if os.path.exists(search_dir):
                                 for item in os.listdir(search_dir):
                                     if item == model_file:
                                         full_path = os.path.join(search_dir, item)
-                                        if full_path not in yolo_cache_paths:
-                                            yolo_cache_paths.append(full_path)
-                        
-                        # Finde bestes Modell zum Cachen
-                        best_source = None
-                        best_size = 0
-                        
+                                        if full_path not in yolo_cache_paths: yolo_cache_paths.append(full_path)
+                        best_source, best_size = None, 0
                         for path in yolo_cache_paths:
                             if os.path.exists(path):
                                 size = os.path.getsize(path)
                                 print(f"📁 Gefunden: {{path}} ({{size // (1024*1024)}} MB)")
-                                if size > best_size and size > 1000000:  # Mindestens 1MB
+                                if size > best_size and size > 1000000:
                                     is_valid, reason = validate_model_file(path)
                                     if is_valid:
-                                        best_source = path
-                                        best_size = size
-                                    else:
-                                        print(f"⚠️ {{path}} defekt: {{reason}}")
-                        
-                        # Cache das beste gefundene Modell
+                                        best_source, best_size = path, size
+                                    else: print(f"⚠️ {{path}} defekt: {{reason}}")
                         if best_source and best_source != cached_model_path:
                             print(f"💾 Cache Modell: {{best_source}} → {{cached_model_path}}")
                             try:
                                 shutil.copy2(best_source, cached_model_path)
-                                
-                                # Validiere gecachtes Modell
                                 is_valid, reason = validate_model_file(cached_model_path)
-                                if is_valid:
-                                    print(f"✅ Modell erfolgreich gecacht: {{os.path.getsize(cached_model_path) // (1024*1024)}} MB")
+                                if is_valid: print(f"✅ Modell erfolgreich gecacht: {{os.path.getsize(cached_model_path) // (1024*1024)}} MB")
                                 else:
                                     print(f"❌ Caching fehlgeschlagen: {{reason}}")
                                     safe_remove_file(cached_model_path)
-                            except Exception as cache_error:
-                                print(f"❌ Cache-Fehler: {{cache_error}}")
-                        
-                        # SCHRITT 4: Finaler Test
-                        if model is None:
-                            print("❌ Kritischer Fehler: Kein Modell geladen!")
-                            raise RuntimeError("Vision Service konnte kein Modell laden")
-                        
+                            except Exception as cache_error: print(f"❌ Cache-Fehler: {{cache_error}}")
+                        if model is None: raise RuntimeError("Vision Service konnte kein Modell laden")
                         print("✅ Vision Service erfolgreich gestartet!")
                         print(f"🤖 Modell-Typ: {{type(model).__name__}}")
                         print(f"💾 Cache-Verzeichnis: {{model_cache_dir}}")
-                        
-                        # Liste alle cached Dateien auf
                         if os.path.exists(model_cache_dir):
                             cached_files = os.listdir(model_cache_dir)
                             if cached_files:
-                                total_size = sum(os.path.getsize(os.path.join(model_cache_dir, f)) 
-                                               for f in cached_files if os.path.isfile(os.path.join(model_cache_dir, f)))
+                                total_size = sum(os.path.getsize(os.path.join(model_cache_dir, f)) for f in cached_files if os.path.isfile(os.path.join(model_cache_dir, f)))
                                 print(f"📦 Gecachte Dateien ({{len(cached_files)}}): {{cached_files}}")
                                 print(f"💽 Gesamt-Cache-Größe: {{total_size // (1024*1024)}} MB")
-                        
                     except Exception as e:
                         print(f"❌ Kritischer Startup-Fehler: {{e}}")
-                        print("🔧 Mögliche Lösungen:")
-                        print("   1. Container neu starten")
-                        print("   2. Vision-Volume löschen: docker volume rm mein-ki-setup_vision_models")
-                        print("   3. Kompletten Neuaufbau: docker compose down && docker compose up --build")
+                        print("🔧 Mögliche Lösungen: ...")
                         raise
-                    
-                    yield  # Server läuft
-                    
-                    # Shutdown
+                    yield
                     print("👋 Vision Service wird beendet")
-                
-                # FastAPI App mit Lifespan
                 app = FastAPI(title='Vision API - Robust', lifespan=lifespan)
-                
                 @app.post('/detect')
                 async def detect_objects(file: UploadFile = File(...)):
-                    if model is None:
-                        return {{"error": "Model not loaded", "status": "error"}}
-                        
+                    if model is None: return {{"error": "Model not loaded", "status": "error"}}
                     try:
                         contents = await file.read()
                         image = Image.open(BytesIO(contents))
                         results = model(image)
                         detections = results[0].boxes.data.tolist() if results[0].boxes else []
-                        return {{
-                            "detections": detections, 
-                            "status": "success", 
-                            "count": len(detections),
-                            "image_size": image.size,
-                            "model_loaded": True
-                        }}
-                    except Exception as e:
-                        return {{"error": str(e), "status": "error", "model_loaded": model is not None}}
-                
+                        return {{"detections": detections, "status": "success", "count": len(detections), "image_size": image.size, "model_loaded": True}}
+                    except Exception as e: return {{"error": str(e), "status": "error", "model_loaded": model is not None}}
                 @app.get('/health')
                 async def health():
                     model_cache_path = '/app/models/yolo/yolov8n.pt'
                     cache_size = 0
                     is_cache_valid = False
-                    
                     if os.path.exists(model_cache_path):
-                        cache_size = os.path.getsize(model_cache_path) // (1024*1024)  # MB
+                        cache_size = os.path.getsize(model_cache_path) // (1024*1024)
                         is_cache_valid, _ = validate_model_file(model_cache_path)
-                    
-                    return {{
-                        "status": "healthy", 
-                        "model_loaded": model is not None,
-                        "model_cached": os.path.exists(model_cache_path),
-                        "cache_valid": is_cache_valid,
-                        "cache_size_mb": cache_size,
-                        "cache_path": model_cache_path,
-                        "service": "vision-robust"
-                    }}
-                
+                    return {{"status": "healthy", "model_loaded": model is not None, "model_cached": os.path.exists(model_cache_path), "cache_valid": is_cache_valid, "cache_size_mb": cache_size, "cache_path": model_cache_path, "service": "vision-robust"}}
                 @app.get('/')
                 async def root():
                     cache_info = {{}}
                     model_dir = '/app/models/yolo'
-                    
                     if os.path.exists(model_dir):
                         files = os.listdir(model_dir)
                         cache_info["cached_files"] = files
                         cache_info["total_files"] = len(files)
-                        
-                        # Berechne Gesamtgröße und Validität
-                        total_size = 0
-                        valid_files = 0
+                        total_size, valid_files = 0, 0
                         for f in files:
                             file_path = os.path.join(model_dir, f)
                             if os.path.isfile(file_path):
-                                file_size = os.path.getsize(file_path)
-                                total_size += file_size
-                                
+                                total_size += os.path.getsize(file_path)
                                 if f.endswith('.pt'):
                                     is_valid, _ = validate_model_file(file_path)
-                                    if is_valid:
-                                        valid_files += 1
-                        
+                                    if is_valid: valid_files += 1
                         cache_info["total_size_mb"] = total_size // (1024*1024)
                         cache_info["valid_models"] = valid_files
-                    
-                    return {{
-                        "message": "Vision API - Robust Version", 
-                        "endpoints": ["/detect", "/health"],
-                        "cache_info": cache_info,
-                        "persistent_storage": "/app/models mounted and validated",
-                        "model_status": "loaded and validated" if model else "not loaded"
-                    }}
-                
-                if __name__ == '__main__':
-                    uvicorn.run(app, host='0.0.0.0', port=8000)
+                    return {{"message": "Vision API - Robust Version", "endpoints": ["/detect", "/health"], "cache_info": cache_info, "persistent_storage": "/app/models mounted and validated", "model_status": "loaded" if model else "not loaded"}}
+                if __name__ == '__main__': uvicorn.run(app, host='0.0.0.0', port=8000)
                 PYEOF
-                
                 echo "🚀 Starte Vision Service (Robust)..."
                 python server.py
 
@@ -881,8 +1041,8 @@ class AllInOneGUI:
             working_dir: /app
             volumes:
               - ./kyutai:/app
-              - ./kyutai_models:/app/models     # Persistente Modell-Speicherung für Voice
-              - ./kyutai_cache:/root/.cache     # Cache für pip Downloads
+              - ./kyutai_models:/app/models
+              - ./kyutai_cache:/root/.cache
             environment:
               - TRANSFORMERS_CACHE=/app/models/transformers
               - HF_HOME=/app/models/huggingface
@@ -892,61 +1052,28 @@ class AllInOneGUI:
               - bash
               - -c
               - |
-                # Erstelle persistente Verzeichnisse
                 mkdir -p /app/models/transformers /app/models/huggingface /app/models/torch
                 mkdir -p /root/.cache/pip
-                
-                # Dependencies installieren (gecacht)
                 pip install --cache-dir=/root/.cache/pip fastapi uvicorn python-multipart
-                
                 cat > server.py << 'PYEOF'
                 from fastapi import FastAPI, UploadFile, File, HTTPException
                 import uvicorn
                 import os
-                
                 app = FastAPI(title='Kyutai Voice API')
-                
                 @app.post('/transcribe')
                 async def transcribe_audio(file: UploadFile = File(...)):
-                    # Hier würde echte Speech-to-Text Logik stehen
-                    # Mit persistenten Modellen aus /app/models/
-                    return {{
-                        "transcription": f"Placeholder transcription for {{file.filename}}", 
-                        "status": "success",
-                        "model_cache": os.path.exists('/app/models/transformers')
-                    }}
-                
-                @app.post('/synthesize')  
+                    return {{"transcription": f"Placeholder transcription for {{file.filename}}", "status": "success", "model_cache": os.path.exists('/app/models/transformers')}}
+                @app.post('/synthesize')
                 async def synthesize_speech(text: str):
-                    # Hier würde echte Text-to-Speech Logik stehen
-                    return {{
-                        "message": f"Would synthesize {{text}}", 
-                        "audio_url": "/placeholder.wav", 
-                        "status": "success"
-                    }}
-                
+                    return {{"message": f"Would synthesize {{text}}", "audio_url": "/placeholder.wav", "status": "success"}}
                 @app.get('/health')
                 async def health():
-                    cache_info = {{
-                        "transformers_cache": len(os.listdir('/app/models/transformers')) if os.path.exists('/app/models/transformers') else 0,
-                        "torch_cache": len(os.listdir('/app/models/torch')) if os.path.exists('/app/models/torch') else 0
-                    }}
-                    return {{
-                        "status": "healthy", 
-                        "service": "kyutai-voice",
-                        "cache_info": cache_info
-                    }}
-                
+                    cache_info = {{"transformers_cache": len(os.listdir('/app/models/transformers')) if os.path.exists('/app/models/transformers') else 0, "torch_cache": len(os.listdir('/app/models/torch')) if os.path.exists('/app/models/torch') else 0}}
+                    return {{"status": "healthy", "service": "kyutai-voice", "cache_info": cache_info}}
                 @app.get('/')
                 async def root():
-                    return {{
-                        "message": "Kyutai Voice API running", 
-                        "endpoints": ["/transcribe", "/synthesize", "/health"],
-                        "persistent_storage": "/app/models mounted"
-                    }}
-                
-                if __name__ == '__main__':
-                    uvicorn.run(app, host='0.0.0.0', port=5005)
+                    return {{"message": "Kyutai Voice API running", "endpoints": ["/transcribe", "/synthesize", "/health"], "persistent_storage": "/app/models mounted"}}
+                if __name__ == '__main__': uvicorn.run(app, host='0.0.0.0', port=5005)
                 PYEOF
                 python server.py
             restart: unless-stopped
@@ -996,11 +1123,13 @@ class AllInOneGUI:
                 vision_port=vision_port,
                 kyutai_port=kyutai_port,
                 searxng_port=searxng_port,
-                stablediffusion_port=stablediffusion_port,
+                stablediffusion_webui_port=stablediffusion_webui_port,
+                stablediffusion_api_port=stablediffusion_api_port,
                 n8n_port=n8n_port,
                 n8n_user=n8n_user,
                 n8n_pass=n8n_pass
-            )
+        )
+
 
     def write_compose(self):
         """7️⃣ Docker Compose schreiben"""
