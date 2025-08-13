@@ -32,7 +32,7 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 - **Web-UIs öffnen**: Öffnet n8n und Stable Diffusion direkt im Browser.
 - **Persistente Speicherung**: Speichert Modelle, Cache und generierte Bilder (z. B. Stable Diffusion Outputs) lokal für Wiederverwendung.
 
-## Verwendung
+## Verwendung ##
 
 1. **Voraussetzungen**:
    - Windows Build aktualisiert
@@ -41,11 +41,15 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
    - i5 i5-8500
    - mindestens GPU RTX 3050
    - Ram 32 GB
-3. **Zeitaufwand
+3. **Zeitaufwand**:
    - Bei Hardware Mindestvoraussetzung 11Mb/s Download dauert das Docker Compose Setup etwa 45 Minuten
    - Falls im Log längere Zeit nichts passiert, Netzwerk- und HD-Traffic im System-Dashboard beobachten!
+4. - Ollama wird im Destop Composer automatisch installiert - Die Windows Variante unter "Punkt 4" ist nicht notwendig
 
-##Kommentar
+**Nicht vergessen, nachdem das Desktop Composer Setup durch ist, muss man noch ein llm installieren**
+Bei Management & Tests "Ollama Modell Pull" vereinfacht machbar.
+
+##Kommentar##
 1.  **Projektziel und Idee**
    - Selbsthosten von KI's
    - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
