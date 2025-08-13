@@ -145,12 +145,12 @@ def run_cmd_capture(cmd, cwd=None, shell=False):
 
 
 class SystemMonitor:
-    def __init__(self, update_callback):
+    def __init__(self, update_callback, log_callback): # Log-Callback hinzugefügt
         self.update_callback = update_callback
+        self.log_callback = log_callback # Log-Funktion speichern
         self._stop_event = threading.Event()
         self.is_running = False
         
-        # KORREKTUR: Initialisiere die Werte hier, damit sie im Thread verfügbar sind
         self.last_net_io = psutil.net_io_counters()
         self.last_time = time.time()
 
@@ -158,10 +158,10 @@ class SystemMonitor:
         if PYNVML_OK:
             try:
                 pynvml.nvmlInit()
-                # Wir nehmen an, dass die primäre GPU für KI bei Index 0 liegt
                 self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             except Exception as e:
-                print(f"Warnung: NVIDIA GPU nicht gefunden oder pynvml-Fehler: {e}")
+                # KORREKTUR: Logge den Fehler über den Callback
+                self.log_callback(f"Warnung: NVIDIA GPU nicht gefunden oder pynvml-Fehler: {e}", "warning")
                 self.gpu_handle = None
 
     def get_stats(self):
@@ -228,10 +228,10 @@ class SystemMonitor:
         while not self._stop_event.is_set():
             try:
                 stats = self.get_stats()
-                # Rufe den GUI-Callback sicher auf
                 self.update_callback(stats)
             except Exception as e:
-                print(f"Fehler im Monitor-Thread: {e}")
+                # KORREKTUR: Logge den Fehler über den Callback
+                self.log_callback(f"Fehler im Monitor-Thread: {e}", "error")
             time.sleep(2)
         self.is_running = False
         if PYNVML_OK and self.gpu_handle:
@@ -247,7 +247,6 @@ class SystemMonitor:
     def stop(self):
         self._stop_event.set()
 
-# --------------------------- GUI Klasse ---------------------------
 # --------------------------- GUI Klasse ---------------------------
 class AllInOneGUI:
     def __init__(self, root):
@@ -356,7 +355,7 @@ class AllInOneGUI:
         self.system_monitor = None
         if PSUTIL_OK and MATPLOTLIB_OK:
             self.setup_dashboard()
-            self.system_monitor = SystemMonitor(self.update_dashboard_widgets)
+            self.system_monitor = SystemMonitor(self.update_dashboard_widgets, self.log)
             self.threaded(self.system_monitor.start)()
         else:
             ttk.Label(self.dashboard_frame, text="Dashboard deaktiviert.\n\nModule nicht gefunden:\npsutil, pynvml, matplotlib", justify=tk.CENTER).pack(pady=50)
@@ -469,101 +468,7 @@ class AllInOneGUI:
 
         self.canvas.draw()
 
-        # Projektordner
-        ttk.Label(topf, text="Projektordner:").grid(column=0, row=0, sticky=tk.W, padx=6, pady=4)
-        self.project_var = tk.StringVar(value=str(DEFAULT_PROJECT_DIR))
-        self.project_entry = ttk.Entry(topf, textvariable=self.project_var, width=80)
-        self.project_entry.grid(column=1, row=0, columnspan=3, sticky=tk.W, padx=6)
-        ttk.Button(topf, text="Browse", command=self.browse_folder).grid(column=4, row=0, padx=6)
 
-        # n8n Credentials
-        ttk.Label(topf, text="n8n Benutzer:").grid(column=0, row=1, sticky=tk.W, padx=6, pady=4)
-        self.n8n_user = tk.StringVar(value=DEFAULT_N8N_USER)
-        ttk.Entry(topf, textvariable=self.n8n_user, width=15).grid(column=1, row=1, sticky=tk.W, padx=6)
-        ttk.Label(topf, text="n8n Passwort:").grid(column=2, row=1, sticky=tk.W, padx=6)
-        self.n8n_pass = tk.StringVar(value=DEFAULT_N8N_PASS)
-        ttk.Entry(topf, textvariable=self.n8n_pass, width=15, show="*").grid(column=3, row=1, sticky=tk.W, padx=6)
-
-        # --- Port Configuration Frame ---
-        portf = ttk.LabelFrame(topf, text="🔌 Port-Konfiguration")
-        portf.grid(column=0, row=2, columnspan=6, sticky=tk.EW, padx=6, pady=8)
-
-        # Port Variables - SearxNG auf 8888
-        self.n8n_port = tk.IntVar(value=DEFAULT_N8N_PORT)
-        self.ollama_port = tk.IntVar(value=DEFAULT_OLLAMA_PORT)
-        self.vision_port = tk.IntVar(value=DEFAULT_VISION_PORT)
-        self.kyutai_port = tk.IntVar(value=DEFAULT_KYUTAI_PORT)
-        self.searxng_port = tk.IntVar(value=DEFAULT_SEARXNG_PORT)
-        self.stablediffusion_port = tk.IntVar(value=DEFAULT_STABLEDIFFUSION_PORT)
-
-        # Port Eingabefelder
-        port_configs = [
-            ("n8n Web UI:", self.n8n_port),
-            ("Ollama API:", self.ollama_port),
-            ("Vision Service:", self.vision_port),
-            ("Kyutai Voice:", self.kyutai_port),
-            ("SearxNG Web:", self.searxng_port),
-            ("Stable Diffusion:", self.stablediffusion_port)
-        ]
-
-        for i, (label, var) in enumerate(port_configs):
-            row = i // 2  # 2 Felder pro Zeile
-            col = (i % 2) * 3  # Jede Eingabe braucht drei Spalten (Label + Entry + Padding)
-            
-            ttk.Label(portf, text=label, width=14).grid(column=col, row=row, sticky=tk.W, padx=6, pady=2)
-            port_entry = ttk.Entry(portf, textvariable=var, width=8)
-            port_entry.grid(column=col+1, row=row, sticky=tk.W, padx=6, pady=2)
-
-        # Reset Ports Button
-        ttk.Button(portf, text="Ports zurücksetzen", command=self.reset_ports).grid(column=5, row=2, padx=12, pady=2, sticky=tk.E)
-
-        # Configure column weights for better spacing
-        for i in range(6):
-            portf.columnconfigure(i, weight=1)
-    
-        # --- Management Buttons Frame ---
-        mgmtf = ttk.LabelFrame(root, text="🎛️ Management & Tests")
-        mgmtf.pack(fill=tk.X, padx=8, pady=6)
-
-        self.btn_down = ttk.Button(mgmtf, text="🛑 Docker Stop", command=self.threaded(self.docker_down))
-        self.btn_logs = ttk.Button(mgmtf, text="📋 Logs streamen", command=self.threaded(self.stream_logs))
-        self.btn_stoplogs = ttk.Button(mgmtf, text="⏹️ Logs stoppen", command=self.stop_logs)
-        self.btn_status = ttk.Button(mgmtf, text="📊 Docker Status", command=self.threaded(self.docker_status))
-        self.btn_test = ttk.Button(mgmtf, text="🧪 Endpunkte testen", command=self.threaded(self.test_endpoints))
-        self.btn_ollama_pull = ttk.Button(mgmtf, text="📥 Ollama Modell Pull", command=self.ollama_pull_dialog)
-        self.btn_import_n8n = ttk.Button(mgmtf, text="📤 n8n Workflow import", command=self.threaded(self.import_n8n_workflow_dialog))
-        self.btn_open_n8n = ttk.Button(mgmtf, text="🌐 Open n8n", command=self.open_n8n)
-        self.btn_open_sd = ttk.Button(mgmtf, text="🖼️ Open Stable Diffusion", command=self.open_stablediffusion)  # Neu
-        self.btn_open_proj = ttk.Button(mgmtf, text="📁 Projektordner", command=self.open_project_dir)
-        self.btn_searx_config = ttk.Button(mgmtf, text="🔍 SearxNG Info", command=self.threaded(self.show_searx_info))
-
-
-        # grid layout for management buttons
-        mgmt_buttons = [self.btn_down, self.btn_logs, self.btn_stoplogs, self.btn_status,
-                       self.btn_test, self.btn_ollama_pull, self.btn_import_n8n,
-                       self.btn_open_n8n, self.btn_open_sd, self.btn_open_proj, self.btn_searx_config]
-        for i, btn in enumerate(mgmt_buttons):
-            btn.grid(column=i % 5, row=i // 5, padx=4, pady=4, sticky="ew")
-
-        # Configure grid weights for management frame
-        for i in range(5):
-            mgmtf.columnconfigure(i, weight=1)
-
-        # --- Log Area ---
-        logf = ttk.LabelFrame(root, text="📝 Status & Logs")
-        logf.pack(fill=tk.BOTH, expand=True, padx=8, pady=6)
-        self.logbox = scrolledtext.ScrolledText(logf, wrap=tk.WORD, height=20)
-        self.logbox.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
-        self.logbox.tag_config("info", foreground="#333333")
-        self.logbox.tag_config("ok", foreground="green")
-        self.logbox.tag_config("error", foreground="red")
-        self.logbox.tag_config("warning", foreground="orange")
-        self.logbox.tag_config("out", foreground="#000000")
-
-        # internal
-        self._stop_logs = threading.Event()
-        self.log("🚀 Willkommen zum Local KI Setup Tool v2.0", tag="info")
-        self.log("📋 Folgen Sie den Setup-Schritten 1-8 in der richtigen Reihenfolge!", tag="info")
 
     # ------------------- UI Hilfsfunktionen -------------------
     def browse_folder(self):
@@ -1372,7 +1277,7 @@ class AllInOneGUI:
             """
         elif "darwin" in system:
             instructions = """
-🔧 OLLAMA INSTALLATION (macOS):
+🔧 OLLAMA INSTALLATION (macOS ):
 Option 1 - Installer:
   1. Gehe zu: https://ollama.com/download
   2. Lade 'Ollama for macOS' herunter
@@ -1383,7 +1288,7 @@ Option 2 - Homebrew:
             """
         else:
             instructions = """
-🔧 OLLAMA INSTALLATION (Linux):
+🔧 OLLAMA INSTALLATION (Linux ):
 curl -fsSL https://ollama.com/install.sh | sh
 
 Alternative:
@@ -1391,7 +1296,7 @@ Alternative:
 2. Folge den Linux-Anweisungen für deine Distribution
             """
         
-        self.log(instructions, tag="warning")
+        self.log(instructions, tag="warning" )
 
     def _attempt_python_install(self):
         """Versucht automatische Python Installation"""
@@ -1476,6 +1381,112 @@ Alternative:
             self.log(f"❌ Fehler bei automatischer Python-Installation: {e}", tag="error")
             return False
 
+    def _show_manual_ollama_instructions(self):
+        """Zeigt manuelle Ollama-Installationsanweisungen"""
+        system = platform.system().lower()
+        
+        if "windows" in system:
+            instructions = """
+🔧 OLLAMA INSTALLATION (Windows):
+1. Gehe zu: https://ollama.com/download
+2. Lade 'Ollama for Windows' herunter
+3. Führe das .exe Installationspaket aus
+4. Starte neu und teste mit: ollama --version
+            """
+        elif "darwin" in system:
+            instructions = """
+🔧 OLLAMA INSTALLATION (macOS ):
+Option 1 - Installer:
+  1. Gehe zu: https://ollama.com/download
+  2. Lade 'Ollama for macOS' herunter
+  3. Installiere die .dmg Datei
+
+Option 2 - Homebrew:
+  brew install ollama
+            """
+        else:
+            instructions = """
+🔧 OLLAMA INSTALLATION (Linux ):
+curl -fsSL https://ollama.com/install.sh | sh
+
+Alternative:
+1. Gehe zu: https://ollama.com/download
+2. Folge den Linux-Anweisungen für deine Distribution
+            """
+        
+        self.log(instructions, tag="warning" )
+
+    def _attempt_python_install(self):
+        """Versucht automatische Python Installation"""
+        self.log("🔄 Versuche automatische Python-Installation...", tag="info")
+        system = platform.system().lower()
+        
+        try:
+            if "windows" in system:
+                self.log("📥 Lade Python für Windows herunter...", tag="info")
+                python_url = "https://www.python.org/ftp/python/3.11.7/python-3.11.7-amd64.exe"
+                
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".exe", delete=False ) as tmp:
+                    with urllib.request.urlopen(python_url) as response:
+                        shutil.copyfileobj(response, tmp)
+                    installer_path = tmp.name
+                
+                self.log("🚀 Starte Python Installer...", tag="info")
+                rc = subprocess.run([
+                    installer_path, "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_pip=1"
+                ]).returncode
+                os.unlink(installer_path)
+                return rc == 0
+                
+            elif "darwin" in system:
+                if is_installed("brew"):
+                    self.log("🍺 Installiere Python via Homebrew...", tag="info")
+                    rc, out = run_cmd_capture(["brew", "install", "python@3.11"])
+                    if rc == 0:
+                        self.log("✅ Python via Homebrew installiert", tag="ok")
+                        return True
+                
+                self.log("📥 Lade Python .pkg für macOS herunter...", tag="info")
+                python_url = "https://www.python.org/ftp/python/3.11.7/python-3.11.7-macos11.pkg"
+                
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".pkg", delete=False ) as tmp:
+                    with urllib.request.urlopen(python_url) as response:
+                        shutil.copyfileobj(response, tmp)
+                    installer_path = tmp.name
+                
+                self.log("🚀 Starte Python Installer (benötigt Passwort)...", tag="info")
+                rc = subprocess.run(["sudo", "installer", "-pkg", installer_path, "-target", "/"]).returncode
+                os.unlink(installer_path)
+                return rc == 0
+                
+            else:
+                self.log("🐧 Versuche Python Installation via System Package Manager...", tag="info")
+                if is_installed("apt"):
+                    cmd = ["sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "python3", "python3-pip", "python3-tk"]
+                elif is_installed("yum"):
+                    cmd = ["sudo", "yum", "install", "-y", "python3", "python3-pip", "python3-tkinter"]
+                elif is_installed("dnf"):
+                    cmd = ["sudo", "dnf", "install", "-y", "python3", "python3-pip", "python3-tkinter"]
+                elif is_installed("pacman"):
+                    cmd = ["sudo", "pacman", "-S", "--noconfirm", "python", "python-pip", "tk"]
+                else:
+                    self.log("❌ Kein unterstützter Package Manager gefunden", tag="error")
+                    return False
+                
+                rc, out = run_cmd_capture(cmd, shell=True)
+                if rc == 0:
+                    self.log("✅ Python via Package Manager installiert", tag="ok")
+                    return True
+                else:
+                    self.log(f"❌ Package Manager Installation fehlgeschlagen: {out}", tag="error")
+                    return False
+                    
+        except Exception as e:
+            self.log(f"❌ Fehler bei automatischer Python-Installation: {e}", tag="error")
+            return False
+
     def _attempt_git_install(self):
         """Versucht automatische Git Installation"""
         self.log("🔄 Versuche automatische Git-Installation...", tag="info")
@@ -1483,40 +1494,29 @@ Alternative:
         
         try:
             if "windows" in system:
-                # Windows: Git für Windows herunterladen
                 self.log("📥 Lade Git für Windows herunter...", tag="info")
                 git_url = "https://github.com/git-for-windows/git/releases/download/v2.43.0.windows.1/Git-2.43.0-64-bit.exe"
                 
                 import tempfile
-                with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix=".exe", delete=False ) as tmp:
                     with urllib.request.urlopen(git_url) as response:
                         shutil.copyfileobj(response, tmp)
                     installer_path = tmp.name
                 
                 self.log("🚀 Starte Git Installer...", tag="info")
-                # Stille Installation
                 rc = subprocess.run([
-                    installer_path,
-                    "/VERYSILENT",
-                    "/NORESTART",
-                    "/NOCANCEL",
-                    "/SP-",
-                    "/CLOSEAPPLICATIONS",
-                    "/RESTARTAPPLICATIONS",
-                    "/COMPONENTS=icons,ext\\reg\\shellhere,assoc,assoc_sh"
+                    installer_path, "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-",
+                    "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS", "/COMPONENTS=icons,ext\\reg\\shellhere,assoc,assoc_sh"
                 ]).returncode
-                
                 os.unlink(installer_path)
                 return rc == 0
                 
             elif "darwin" in system:
-                # macOS: Versuche Homebrew oder Xcode Command Line Tools
                 if is_installed("brew"):
                     self.log("🍺 Installiere Git via Homebrew...", tag="info")
                     rc, out = run_cmd_capture(["brew", "install", "git"])
                     return rc == 0
                 else:
-                    # Xcode Command Line Tools installieren
                     self.log("🔧 Installiere Xcode Command Line Tools...", tag="info")
                     rc, out = run_cmd_capture(["xcode-select", "--install"])
                     if rc == 0:
@@ -1526,13 +1526,9 @@ Alternative:
                     return False
                     
             else:
-                # Linux: System Package Manager
                 self.log("🐧 Installiere Git via System Package Manager...", tag="info")
-                
                 if is_installed("apt"):
-                    rc, out = run_cmd_capture(["sudo", "apt", "update"], shell=True)
-                    if rc == 0:
-                        rc, out = run_cmd_capture(["sudo", "apt", "install", "-y", "git"], shell=True)
+                    rc, out = run_cmd_capture(["sudo", "apt", "update", "&&", "sudo", "apt", "install", "-y", "git"], shell=True)
                 elif is_installed("yum"):
                     rc, out = run_cmd_capture(["sudo", "yum", "install", "-y", "git"], shell=True)
                 elif is_installed("dnf"):
@@ -1542,7 +1538,6 @@ Alternative:
                 else:
                     self.log("❌ Kein unterstützter Package Manager gefunden", tag="error")
                     return False
-                
                 return rc == 0
                 
         except Exception as e:
@@ -1553,9 +1548,9 @@ Alternative:
         """Zeigt manuelle Git-Installationsanweisungen"""
         system = platform.system().lower()
         if "windows" in system:
-            self.log("📥 Windows: Git von https://git-scm.com/download/win installieren", tag="warning")
+            self.log("📥 Windows: Git von https://git-scm.com/download/win installieren", tag="warning" )
         elif "darwin" in system:
-            self.log("📥 macOS: 'brew install git' oder von https://git-scm.com/download/mac", tag="warning")
+            self.log("📥 macOS: 'brew install git' oder von https://git-scm.com/download/mac", tag="warning" )
         else:
             self.log("📥 Linux: 'sudo apt install git' oder 'sudo yum install git'", tag="warning")
 
@@ -1566,153 +1561,93 @@ Alternative:
         
         try:
             if "windows" in system:
-                # Windows: Prüfe WSL2 und Virtualisierung
                 self.log("🔍 Prüfe Windows-Voraussetzungen...", tag="info")
-                
-                # Prüfe WSL2
-                wsl_check = self._check_wsl2()
-                if not wsl_check:
-                    self.log("❌ WSL2 nicht verfügbar - wird für Docker Desktop benötigt", tag="error")
-                    self.log("💡 WSL2 Installation:", tag="info")
-                    self.log("   1. Öffne PowerShell als Administrator", tag="info")
-                    self.log("   2. Führe aus: wsl --install", tag="info")
-                    self.log("   3. Starte Windows neu", tag="info")
-                    self.log("   4. Führe nochmal Setup aus", tag="info")
+                if not self._check_wsl2():
+                    self.log("❌ WSL2 nicht verfügbar - wird für Docker Desktop benötigt", "error")
+                    self.log("💡 WSL2 Installation:\n   1. Öffne PowerShell als Administrator\n   2. Führe aus: wsl --install\n   3. Starte Windows neu\n   4. Führe nochmal Setup aus", "info")
                     return False
                 
-                # Prüfe Hyper-V / Virtualisierung
-                virt_check = self._check_virtualization()
-                if not virt_check:
-                    self.log("⚠️ Virtualisierung eventuell nicht aktiviert", tag="warning")
-                    self.log("💡 Aktiviere Virtualisierung im BIOS falls Docker Probleme hat", tag="info")
+                if not self._check_virtualization():
+                    self.log("⚠️ Virtualisierung eventuell nicht aktiviert. Aktiviere sie im BIOS, falls Docker Probleme hat.", "warning")
                 
-                # Docker Desktop herunterladen
-                self.log("📥 Lade Docker Desktop für Windows herunter...", tag="info")
+                self.log("📥 Lade Docker Desktop für Windows herunter... (kann einige Minuten dauern)", tag="info")
                 docker_url = "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
                 
                 import tempfile
-                with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as tmp:
-                    self.log("⏳ Download läuft... (kann einige Minuten dauern)", tag="info")
+                with tempfile.NamedTemporaryFile(suffix=".exe", delete=False ) as tmp:
                     with urllib.request.urlopen(docker_url) as response:
                         shutil.copyfileobj(response, tmp)
                     installer_path = tmp.name
                 
                 self.log("🚀 Starte Docker Desktop Installer...", tag="info")
-                # Docker Desktop Installation mit WSL2
-                rc = subprocess.run([
-                    installer_path,
-                    "install",
-                    "--quiet",
-                    "--accept-license",
-                    "--backend=wsl-2"
-                ]).returncode
-                
+                rc = subprocess.run([installer_path, "install", "--quiet", "--accept-license", "--backend=wsl-2"]).returncode
                 os.unlink(installer_path)
                 if rc == 0:
-                    self.log("✅ Docker Desktop Installation gestartet", tag="ok")
-                    self.log("🔄 Nach Installation: Docker Desktop starten", tag="warning")
-                    self.log("🔄 Eventuell ist ein Neustart erforderlich", tag="warning")
+                    self.log("✅ Docker Desktop Installation gestartet. Bitte nach Abschluss Docker Desktop starten.", "ok")
+                    self.log("🔄 Eventuell ist ein Neustart erforderlich.", "warning")
                     return True
                 else:
-                    self.log("❌ Docker Desktop Installation fehlgeschlagen", tag="error")
+                    self.log("❌ Docker Desktop Installation fehlgeschlagen", "error")
                     return False
                 
             elif "darwin" in system:
-                # macOS: Docker Desktop oder via Homebrew
                 if is_installed("brew"):
                     self.log("🍺 Installiere Docker Desktop via Homebrew...", tag="info")
                     rc, out = run_cmd_capture(["brew", "install", "--cask", "docker"])
                     if rc == 0:
-                        self.log("✅ Docker Desktop via Homebrew installiert", tag="ok")
-                        self.log("💡 Docker Desktop manuell starten erforderlich", tag="info")
+                        self.log("✅ Docker Desktop via Homebrew installiert. Bitte manuell starten.", "ok")
                         return True
                 
-                # Fallback: Direkter Download
                 self.log("📥 Lade Docker Desktop für macOS herunter...", tag="info")
-                
-                # Erkenne Apple Silicon vs Intel
-                try:
-                    arch = subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip()
-                    if arch == "arm64":
-                        docker_url = "https://desktop.docker.com/mac/main/arm64/Docker.dmg"
-                    else:
-                        docker_url = "https://desktop.docker.com/mac/main/amd64/Docker.dmg"
-                except:
-                    docker_url = "https://desktop.docker.com/mac/main/amd64/Docker.dmg"
+                arch = subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip()
+                docker_url = "https://desktop.docker.com/mac/main/arm64/Docker.dmg" if arch == "arm64" else "https://desktop.docker.com/mac/main/amd64/Docker.dmg"
                 
                 import tempfile
-                with tempfile.NamedTemporaryFile(suffix=".dmg", delete=False) as tmp:
+                with tempfile.NamedTemporaryFile(suffix=".dmg", delete=False ) as tmp:
                     with urllib.request.urlopen(docker_url) as response:
                         shutil.copyfileobj(response, tmp)
                     dmg_path = tmp.name
                 
                 self.log("🚀 Mounte Docker DMG...", tag="info")
-                rc = subprocess.run(["hdiutil", "attach", dmg_path, "-nobrowse"]).returncode
-                if rc == 0:
-                    # Kopiere Docker.app zu Applications
-                    rc2 = subprocess.run([
-                        "cp", "-R", "/Volumes/Docker/Docker.app", "/Applications/"
-                    ]).returncode
+                if subprocess.run(["hdiutil", "attach", dmg_path, "-nobrowse"]).returncode == 0:
+                    rc2 = subprocess.run(["cp", "-R", "/Volumes/Docker/Docker.app", "/Applications/"]).returncode
                     subprocess.run(["hdiutil", "detach", "/Volumes/Docker"])
                     os.unlink(dmg_path)
-                    
                     if rc2 == 0:
-                        self.log("✅ Docker Desktop installiert", tag="ok")
-                        self.log("💡 Docker Desktop manuell starten: /Applications/Docker.app", tag="info")
+                        self.log("✅ Docker Desktop installiert. Bitte manuell starten: /Applications/Docker.app", "ok")
                         return True
                 return False
                 
             else:
-                # Linux: Offizielles Docker Install Script
                 self.log("🐧 Installiere Docker via offizielles Script...", tag="info")
-                
-                # Docker Install Script herunterladen und ausführen
                 try:
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False) as tmp:
-                        with urllib.request.urlopen("https://get.docker.com") as response:
-                            script_content = response.read().decode('utf-8')
-                        tmp.write(script_content)
-                        script_path = tmp.name
+                    with urllib.request.urlopen("https://get.docker.com" ) as response:
+                        script_content = response.read().decode('utf-8')
                     
-                    # Script ausführbar machen und mit sudo ausführen
-                    os.chmod(script_path, 0o755)
-                    proc = subprocess.Popen(["sudo", "bash", script_path], 
-                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                    
-                    # Output streamen
-                    for line in proc.stdout:
-                        self.log(line.rstrip(), tag="out")
-                    
+                    proc = subprocess.Popen(["sudo", "bash", "-c", script_content], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    for line in proc.stdout: self.log(line.rstrip(), tag="out")
                     proc.wait()
-                    os.unlink(script_path)
                     
                     if proc.returncode == 0:
-                        self.log("✅ Docker Installation erfolgreich!", tag="ok")
-                        
-                        # Benutzer zur docker-Gruppe hinzufügen
+                        self.log("✅ Docker Installation erfolgreich!", "ok")
                         username = os.getenv("USER") or os.getenv("USERNAME")
                         if username:
-                            self.log(f"👤 Füge Benutzer {username} zur docker-Gruppe hinzu...", tag="info")
+                            self.log(f"👤 Füge Benutzer {username} zur docker-Gruppe hinzu...", "info")
                             subprocess.run(["sudo", "usermod", "-aG", "docker", username])
-                            self.log("⚠️ Logout/Login erforderlich für docker-Gruppenmitgliedschaft", tag="warning")
+                            self.log("⚠️ Logout/Login erforderlich, damit die Gruppenänderung wirksam wird.", "warning")
                         
-                        # Docker Service starten
-                        self.log("🚀 Starte Docker Service...", tag="info")
-                        subprocess.run(["sudo", "systemctl", "enable", "docker"])
-                        subprocess.run(["sudo", "systemctl", "start", "docker"])
-                        
+                        self.log("🚀 Starte und aktiviere Docker Service...", "info")
+                        subprocess.run(["sudo", "systemctl", "enable", "--now", "docker"])
                         return True
                     else:
-                        self.log("❌ Docker Installation fehlgeschlagen", tag="error")
+                        self.log("❌ Docker Installation fehlgeschlagen", "error")
                         return False
-                        
                 except Exception as e:
-                    self.log(f"❌ Fehler beim Docker Install-Script: {e}", tag="error")
+                    self.log(f"❌ Fehler beim Docker Install-Script: {e}", "error")
                     return False
                     
         except Exception as e:
-            self.log(f"❌ Fehler bei automatischer Docker-Installation: {e}", tag="error")
+            self.log(f"❌ Fehler bei automatischer Docker-Installation: {e}", "error")
             return False
 
     def _check_wsl2(self):
@@ -1734,8 +1669,6 @@ Alternative:
         except:
             return False
 
-
-
     def _show_manual_docker_instructions(self):
             """Zeigt manuelle Docker-Installationsanweisungen"""
             system = platform.system().lower()
@@ -1754,190 +1687,58 @@ Alternative:
         
         try:
             if "windows" in system:
-                # Windows: Prüfe Windows-Version und wähle kompatiblen Installer
-                self.log("🔍 Prüfe Windows-Version für Kompatibilität...", tag="info")
+                self.log("📥 Lade Ollama für Windows herunter...", tag="info")
+                ollama_url = "https://ollama.com/download/OllamaSetup.exe"
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".exe", delete=False ) as tmp:
+                    with urllib.request.urlopen(ollama_url) as response:
+                        shutil.copyfileobj(response, tmp)
+                    installer_path = tmp.name
                 
-                # Erkenne Windows-Version
-                try:
-                    win_version = platform.release()
-                    win_ver_num = float(win_version) if win_version.replace('.', '').isdigit() else 10.0
-                    self.log(f"🪟 Windows Version: {win_version}", tag="info")
-                except:
-                    win_ver_num = 10.0
-                    self.log("🪟 Windows Version unbekannt, verwende Standard", tag="warning")
-                
-                # Verwende GitHub Releases für spezifische Versionen
-                ollama_urls = [
-                    # Neueste Version (für Windows 10+)
-                    "https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe",
-                    # Ältere kompatible Version
-                    "https://github.com/ollama/ollama/releases/download/v0.1.48/OllamaSetup.exe",
-                    # Fallback direkte URL
-                    "https://ollama.com/download/OllamaSetup.exe"
-                ]
-                
-                success = False
-                for i, ollama_url in enumerate(ollama_urls):
-                    try:
-                        self.log(f"📥 Lade Ollama für Windows herunter (Versuch {i+1}/{len(ollama_urls)})...", tag="info")
-                        self.log(f"🔗 URL: {ollama_url}", tag="info")
-                        
-                        import tempfile
-                        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as tmp:
-                            self.log("⏳ Download läuft...", tag="info")
-                            with urllib.request.urlopen(ollama_url, timeout=60) as response:
-                                if response.getcode() != 200:
-                                    self.log(f"❌ HTTP {response.getcode()} - versuche nächste URL", tag="warning")
-                                    continue
-                                shutil.copyfileobj(response, tmp)
-                            installer_path = tmp.name
-                        
-                        # Prüfe ob Datei gültig ist
-                        if os.path.getsize(installer_path) < 1000:
-                            self.log("❌ Download zu klein - ungültige Datei", tag="warning")
-                            os.unlink(installer_path)
-                            continue
-                        
-                        self.log("✅ Download erfolgreich", tag="ok")
-                        
-                        # Versuche verschiedene Installationsparameter
-                        install_commands = [
-                            [installer_path, "/S"],          # Silent install
-                            [installer_path, "/SILENT"],     # Alternative silent
-                            [installer_path, "/VERYSILENT"], # Sehr still
-                            [installer_path]                 # Standard (mit GUI)
-                        ]
-                        
-                        for j, cmd in enumerate(install_commands):
-                            self.log(f"🚀 Starte Ollama Installer (Modus {j+1})...", tag="info")
-                            try:
-                                if j == 3:  # Letzter Versuch mit GUI
-                                    self.log("💬 Installation mit Benutzeroberfläche - bitte Installer abschließen", tag="warning")
-                                
-                                proc = subprocess.run(cmd, timeout=300, capture_output=True, text=True)
-                                
-                                if proc.returncode == 0:
-                                    self.log("✅ Ollama Installation erfolgreich!", tag="ok")
-                                    success = True
-                                    break
-                                elif proc.returncode == 1223:  # User cancelled
-                                    self.log("⚠️ Installation vom Benutzer abgebrochen", tag="warning")
-                                    break
-                                else:
-                                    error_msg = proc.stderr.strip() if proc.stderr else f"Exit Code: {proc.returncode}"
-                                    self.log(f"❌ Installationsmodus {j+1} fehlgeschlagen: {error_msg}", tag="warning")
-                                    
-                            except subprocess.TimeoutExpired:
-                                self.log("⏰ Installation-Timeout - eventuell läuft sie im Hintergrund", tag="warning")
-                                break
-                            except Exception as install_error:
-                                self.log(f"❌ Installationsfehler: {install_error}", tag="warning")
-                        
-                        # Cleanup
-                        try:
-                            os.unlink(installer_path)
-                        except:
-                            pass
-                        
-                        if success:
-                            break
-                            
-                    except Exception as download_error:
-                        self.log(f"❌ Download-Fehler für URL {i+1}: {download_error}", tag="warning")
-                        continue
-                
-                if not success:
-                    self.log("❌ Alle automatischen Installationsversuche fehlgeschlagen", tag="error")
-                    self.log("💡 Mögliche Ursachen:", tag="info")
-                    self.log("   • Windows-Version zu alt (benötigt Windows 10+)", tag="info")
-                    self.log("   • Antivirus blockiert Installation", tag="info")
-                    self.log("   • Keine Administratorrechte", tag="info")
-                    self.log("   • Netzwerkprobleme beim Download", tag="info")
-                    return False
-                
-                # Nach Installation prüfen
-                time.sleep(2)  # Kurz warten
-                if is_installed("ollama"):
-                    self.log("✅ Ollama erfolgreich installiert und im PATH verfügbar", tag="ok")
+                self.log("🚀 Starte Ollama Installer...", tag="info")
+                proc = subprocess.run([installer_path, "/S"], capture_output=True, text=True)
+                os.unlink(installer_path)
+                if proc.returncode == 0:
+                    self.log("✅ Ollama Installation erfolgreich!", "ok")
                     return True
                 else:
-                    self.log("⚠️ Ollama installiert, aber eventuell noch nicht im PATH", tag="warning")
-                    self.log("💡 Lösung: Kommandozeile neu starten oder Computer neu starten", tag="info")
-                    return True  # Als Erfolg werten, da Installation lief
-                
-                return success
-                    
+                    self.log(f"❌ Ollama Installation fehlgeschlagen: {proc.stderr}", "error")
+                    return False
+            
             elif "darwin" in system:
                 if is_installed("brew"):
-                    # macOS mit Homebrew
                     self.log("🍺 Installiere Ollama via Homebrew...", tag="info")
                     rc, out = run_cmd_capture(["brew", "install", "ollama"])
                     if rc == 0:
-                        self.log("✅ Ollama erfolgreich über Homebrew installiert!", tag="ok")
+                        self.log("✅ Ollama erfolgreich über Homebrew installiert!", "ok")
                         return True
                     else:
-                        self.log(f"❌ Homebrew Installation fehlgeschlagen: {out}", tag="error")
+                        self.log(f"❌ Homebrew Installation fehlgeschlagen: {out}", "error")
                         return False
                 else:
-                    # macOS: Direkter Download
-                    self.log("📥 Lade Ollama für macOS herunter...", tag="info")
-                    ollama_url = "https://ollama.com/download/mac"
-                    
-                    import tempfile
-                    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-                        with urllib.request.urlopen(ollama_url) as response:
-                            shutil.copyfileobj(response, tmp)
-                        zip_path = tmp.name
-                    
-                    # Extrahiere und installiere
-                    import zipfile
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall("/tmp/ollama_install")
-                    
-                    # Kopiere nach /usr/local/bin
-                    rc = subprocess.run([
-                        "sudo", "cp", "/tmp/ollama_install/ollama", "/usr/local/bin/"
-                    ]).returncode
-                    
-                    os.unlink(zip_path)
-                    shutil.rmtree("/tmp/ollama_install", ignore_errors=True)
-                    
-                    if rc == 0:
-                        subprocess.run(["sudo", "chmod", "+x", "/usr/local/bin/ollama"])
-                        self.log("✅ Ollama Installation erfolgreich!", tag="ok")
-                        return True
-                    else:
-                        self.log("❌ Ollama Installation fehlgeschlagen", tag="error")
-                        return False
+                    self.log("❌ Homebrew nicht gefunden. Bitte manuell installieren.", "error")
+                    return False
                         
             else:
-                # Linux/Unix mit offiziellem Script
-                self.log("🐧 Führe offizielles Installations-Script aus...", tag="info")
-                
-                # Download und ausführen des offiziellen Scripts
+                self.log("🐧 Führe offizielles Installations-Script für Ollama aus...", tag="info")
                 try:
-                    with urllib.request.urlopen("https://ollama.com/install.sh") as response:
+                    with urllib.request.urlopen("https://ollama.com/install.sh" ) as response:
                         script_content = response.read().decode('utf-8')
-                    
-                    # Script über bash ausführen
-                    proc = subprocess.Popen(["bash"], stdin=subprocess.PIPE, 
-                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                    output, _ = proc.communicate(input=script_content)
-                    
+                    proc = subprocess.Popen(["bash", "-c", script_content], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    for line in proc.stdout: self.log(line.rstrip(), tag="out")
+                    proc.wait()
                     if proc.returncode == 0:
-                        self.log("✅ Ollama Installation erfolgreich!", tag="ok")
-                        self.log(output, tag="out")
+                        self.log("✅ Ollama Installation erfolgreich!", "ok")
                         return True
                     else:
-                        self.log(f"❌ Installation fehlgeschlagen: {output}", tag="error")
+                        self.log("❌ Installation fehlgeschlagen.", "error")
                         return False
-                        
                 except Exception as e:
-                    self.log(f"❌ Fehler beim Download des Install-Scripts: {e}", tag="error")
+                    self.log(f"❌ Fehler beim Download des Install-Scripts: {e}", "error")
                     return False
                     
         except Exception as e:
-            self.log(f"❌ Fehler bei automatischer Ollama-Installation: {e}", tag="error")
+            self.log(f"❌ Fehler bei automatischer Ollama-Installation: {e}", "error")
             return False
 
     def create_project(self):

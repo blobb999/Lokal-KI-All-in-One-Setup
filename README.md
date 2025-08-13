@@ -15,7 +15,8 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
   - Ollama API (Default: 11434)
   - Vision Service (Default: 5000)
   - Kyutai Voice (Default: 8000)
-  - Stable Diffusion (Default: 7860)
+  - Stable Diffusion FastAPI (Default: 7859)
+  - Visio Difussion WebUI (Default: 7860)
   - SearxNG Web (Default: 8888) (Bonus App)
 
 - **Dienste**:
@@ -40,3 +41,16 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
    - i5 i5-8500
    - mindestens GPU RTX 3050
    - Ram 32 GB
+3. **Zeitaufwand
+   - Bei Hardware Mindestvoraussetzung 11Mb/s Download dauert das Docker Compose Setup etwa 45 Minuten
+   - Falls im Log längere Zeit nichts passiert, Netzwerk- und HD-Traffic im System-Dashboard beobachten!
+
+##Kommentar
+1.  **Projektziel und Idee**
+   - Selbsthosten von KI's
+   - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
+   - Performance-Tests von KIs
+
+Das Tool wurde für Einsteiger wie mich selbst erstellt - Ich liebe automatismen, und genau dazu sind Computer ja da :)
+
+Kontakt: Discord - https://discord.com/channels/1404563003046887665/1404563003499876405
