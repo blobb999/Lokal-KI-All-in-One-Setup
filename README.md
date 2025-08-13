@@ -49,7 +49,7 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 **Nicht vergessen, nachdem das Desktop Composer Setup durch ist, muss man noch ein llm installieren**
 Bei Management & Tests "Ollama Modell Pull" vereinfacht machbar.
 
-##Kommentar##
+## Kommentar ##
 1.  **Projektziel und Idee**
    - Selbsthosten von KI's
    - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
