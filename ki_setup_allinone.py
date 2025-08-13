@@ -45,14 +45,12 @@ try:
     import psutil
     import pynvml
     import matplotlib
-    # KORREKTUR: Importiere pyplot, um Zugriff auf 'style' zu erhalten
     import matplotlib.pyplot as plt
     from matplotlib.figure import Figure
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     
     # Matplotlib Backend und Stil setzen
     matplotlib.use("TkAgg")
-    # KORREKTUR: Verwende plt.style statt matplotlib.style
     plt.style.use("seaborn-v0_8-darkgrid") 
     
     PSUTIL_OK = True
@@ -69,13 +67,13 @@ except ImportError as e:
 DEFAULT_PROJECT_DIR = Path.home() / "mein-ki-setup"
 COMPOSE_FILENAME = "docker-compose.yml"
 
-# Default Ports - SearxNG auf 8888 geändert
 DEFAULT_N8N_PORT = 5678
 DEFAULT_OLLAMA_PORT = 11434
 DEFAULT_VISION_PORT = 8008
 DEFAULT_KYUTAI_PORT = 4005
 DEFAULT_SEARXNG_PORT = 8888
 DEFAULT_STABLEDIFFUSION_PORT = 7860
+DEFAULT_OPENWEBUI_PORT = 7070
 
 DEFAULT_N8N_USER = "admin"
 DEFAULT_N8N_PASS = "deinpasswort"
@@ -83,9 +81,7 @@ DEFAULT_N8N_PASS = "deinpasswort"
 # --------------------------- Hilfsfunktionen ---------------------------
 def is_installed(cmd_name):
     """Prüft ob Kommando verfügbar ist und updated PATH"""
-    # Auf Windows: PATH neu laden falls gerade installiert
     if platform.system().lower() == "windows":
-        # PATH aus Registry neu laden
         try:
             import winreg
             with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment") as key:
@@ -96,11 +92,10 @@ def is_installed(cmd_name):
                 except FileNotFoundError:
                     user_path = ""
             
-            # PATH kombinieren und aktualisieren
             new_path = system_path + ";" + user_path if user_path else system_path
             os.environ["PATH"] = new_path
         except:
-            pass  # Bei Fehlern weitermachen
+            pass 
     
     return shutil.which(cmd_name) is not None
 
@@ -145,9 +140,9 @@ def run_cmd_capture(cmd, cwd=None, shell=False):
 
 
 class SystemMonitor:
-    def __init__(self, update_callback, log_callback): # Log-Callback hinzugefügt
+    def __init__(self, update_callback, log_callback):
         self.update_callback = update_callback
-        self.log_callback = log_callback # Log-Funktion speichern
+        self.log_callback = log_callback 
         self._stop_event = threading.Event()
         self.is_running = False
         
@@ -160,7 +155,6 @@ class SystemMonitor:
                 pynvml.nvmlInit()
                 self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             except Exception as e:
-                # KORREKTUR: Logge den Fehler über den Callback
                 self.log_callback(f"Warnung: NVIDIA GPU nicht gefunden oder pynvml-Fehler: {e}", "warning")
                 self.gpu_handle = None
 
@@ -168,7 +162,7 @@ class SystemMonitor:
         """Sammelt alle Systemstatistiken"""
         current_time = time.time()
         time_delta = current_time - self.last_time
-        if time_delta == 0: time_delta = 1 # Division durch Null vermeiden
+        if time_delta == 0: time_delta = 1 
 
         current_net_io = psutil.net_io_counters()
         bytes_sent = current_net_io.bytes_sent - self.last_net_io.bytes_sent
@@ -178,30 +172,25 @@ class SystemMonitor:
 
         ram = psutil.virtual_memory()
         
-        # KORREKTUR: Verwende den Projektpfad, um das richtige Laufwerk zu finden
         try:
             project_path = Path(DEFAULT_PROJECT_DIR).expanduser()
-            # Stelle sicher, dass das Verzeichnis existiert, um einen Fehler zu vermeiden
             if not project_path.exists():
                 project_path.mkdir(parents=True, exist_ok=True)
             disk = psutil.disk_usage(str(project_path))
         except Exception:
-            # Fallback auf das Wurzelverzeichnis, falls etwas schiefgeht
             disk = psutil.disk_usage('/')
 
         cpu_temp = "N/A"
         if hasattr(psutil, "sensors_temperatures"):
             temps = psutil.sensors_temperatures()
-            # Verschiedene Schlüssel für verschiedene Systeme (Windows/Linux)
             if 'coretemp' in temps:
                 cpu_temp = temps['coretemp'][0].current
-            elif temps: # Nimm den ersten verfügbaren Sensor
+            elif temps:
                 cpu_temp = list(temps.values())[0][0].current
 
         gpu_name, gpu_util, gpu_mem_percent, gpu_mem_used, gpu_mem_total, gpu_temp = [None] * 6
         if self.gpu_handle:
             try:
-                # KORREKTUR: .decode() wird nicht mehr benötigt
                 gpu_name = pynvml.nvmlDeviceGetName(self.gpu_handle)
                 util = pynvml.nvmlDeviceGetUtilizationRates(self.gpu_handle)
                 gpu_util = util.gpu
@@ -211,7 +200,7 @@ class SystemMonitor:
                 gpu_mem_percent = int((mem.used / mem.total) * 100) if mem.total > 0 else 0
                 gpu_temp = pynvml.nvmlDeviceGetTemperature(self.gpu_handle, pynvml.NVML_TEMPERATURE_GPU)
             except pynvml.NVMLError:
-                self.gpu_handle = None # Deaktiviere bei Fehler
+                self.gpu_handle = None 
 
         return {
             "cpu_percent": psutil.cpu_percent(), "cpu_temp": cpu_temp,
@@ -230,7 +219,7 @@ class SystemMonitor:
                 stats = self.get_stats()
                 self.update_callback(stats)
             except Exception as e:
-                # KORREKTUR: Logge den Fehler über den Callback
+
                 self.log_callback(f"Fehler im Monitor-Thread: {e}", "error")
             time.sleep(2)
         self.is_running = False
@@ -252,7 +241,7 @@ class AllInOneGUI:
     def __init__(self, root):
         self.root = root
         root.title("Local KI All-in-One Setup & Monitoring v2.2")
-        root.geometry("1600x900") # Leicht angepasst für besseres Layout
+        root.geometry("1600x900") 
 
         self.log_queue = Queue()
 
@@ -260,7 +249,7 @@ class AllInOneGUI:
         main_pane.pack(fill=tk.BOTH, expand=True)
 
         left_frame = ttk.Frame(main_pane, width=1000)
-        main_pane.add(left_frame, weight=3) # Mehr Gewicht für den Hauptbereich
+        main_pane.add(left_frame, weight=3) 
 
         right_frame = ttk.Frame(main_pane, width=500)
         main_pane.add(right_frame, weight=1)
@@ -268,7 +257,7 @@ class AllInOneGUI:
         # --- Linker Frame ---
         self.setup_frame = ttk.LabelFrame(left_frame, text="🔧 Setup-Reihenfolge (1-8)")
         self.setup_frame.pack(fill=tk.X, padx=8, pady=6)
-        # ... (Setup-Buttons bleiben gleich)
+
         setup_steps = [
             ("1⃣ Python 3.8+ prüfen", self.check_python_setup), ("2⃣ Git Installation prüfen", self.check_git_setup),
             ("3⃣ Docker Installation", self.setup_docker_info), ("4⃣ Ollama lokal installieren", self.setup_ollama_local),
@@ -282,7 +271,7 @@ class AllInOneGUI:
 
         topf = ttk.LabelFrame(left_frame, text="⚙️ Einstellungen")
         topf.pack(fill=tk.X, padx=8, pady=6)
-        # ... (Einstellungen bleiben gleich)
+
         ttk.Label(topf, text="Projektordner:").grid(column=0, row=0, sticky=tk.W, padx=6, pady=4)
         self.project_var = tk.StringVar(value=str(DEFAULT_PROJECT_DIR))
         self.project_entry = ttk.Entry(topf, textvariable=self.project_var, width=70)
@@ -298,34 +287,36 @@ class AllInOneGUI:
         ttk.Entry(topf, textvariable=self.n8n_pass, width=20, show="*").grid(column=3, row=1, sticky=tk.W, padx=6)
 
         portf = ttk.LabelFrame(topf, text="🔌 Port-Konfiguration")
-        portf.grid(column=0, row=2, columnspan=5, sticky=tk.EW, padx=6, pady=8)
-        # ... (Ports bleiben gleich)
+        portf.grid(column=0, row=2, columnspan=5, sticky=tk.EW, padx=7, pady=8)
+
         self.n8n_port = tk.IntVar(value=DEFAULT_N8N_PORT)
         self.ollama_port = tk.IntVar(value=DEFAULT_OLLAMA_PORT)
         self.vision_port = tk.IntVar(value=DEFAULT_VISION_PORT)
         self.kyutai_port = tk.IntVar(value=DEFAULT_KYUTAI_PORT)
         self.searxng_port = tk.IntVar(value=DEFAULT_SEARXNG_PORT)
         self.stablediffusion_port = tk.IntVar(value=DEFAULT_STABLEDIFFUSION_PORT)
+        self.openwebui_port = tk.IntVar(value=DEFAULT_OPENWEBUI_PORT)
         port_configs = [
             ("n8n:", self.n8n_port), ("Ollama:", self.ollama_port), ("Vision:", self.vision_port),
-            ("Kyutai:", self.kyutai_port), ("SearxNG:", self.searxng_port), ("Stable Diffusion:", self.stablediffusion_port)
+            ("Kyutai:", self.kyutai_port), ("SearxNG:", self.searxng_port), ("Stable Diffusion:", self.stablediffusion_port),
+            ("Open-WebUI:", self.openwebui_port)
         ]
         for i, (label, var) in enumerate(port_configs):
             ttk.Label(portf, text=label).grid(column=i*2, row=0, sticky=tk.W, padx=(10,2))
             ttk.Entry(portf, textvariable=var, width=7).grid(column=i*2+1, row=0, sticky=tk.W, padx=(0,10))
-        portf.columnconfigure(12, weight=1) # Spacer
-        ttk.Button(portf, text="Reset", command=self.reset_ports).grid(column=13, row=0, padx=10, sticky=tk.E)
+        portf.columnconfigure(14, weight=1)
+        ttk.Button(portf, text="Reset", command=self.reset_ports).grid(column=15, row=0, padx=10, sticky=tk.E)
 
         mgmtf = ttk.LabelFrame(left_frame, text="🎛️ Management & Tests")
         mgmtf.pack(fill=tk.X, padx=8, pady=6)
-        # ... (Management-Buttons bleiben gleich)
+
         mgmt_buttons_config = [
             ("🛑 Docker Stop", self.docker_down), ("📋 Logs streamen", self.stream_logs),
             ("⏹️ Logs stoppen", self.stop_logs), ("📊 Docker Status", self.docker_status),
             ("🧪 Endpunkte testen", self.test_endpoints), ("📥 Ollama Modell Pull", self.ollama_pull_dialog),
             ("📤 n8n Workflow import", self.import_n8n_workflow_dialog), ("🌐 Open n8n", self.open_n8n),
-            ("🖼️ Open Stable Diffusion", self.open_stablediffusion), ("📁 Projektordner", self.open_project_dir),
-            ("🔍 SearxNG Info", self.show_searx_info)
+            ("🖼️ Open Stable Diffusion", self.open_stablediffusion), ("🌐 Open-WebUI", self.open_openwebui),
+            ("📁 Projektordner", self.open_project_dir), ("🔍 SearxNG Info", self.show_searx_info)
         ]
         for i, (text, command) in enumerate(mgmt_buttons_config):
             is_threaded = text not in ["📥 Ollama Modell Pull", "⏹️ Logs stoppen", "🌐 Open n8n", "🖼️ Open Stable Diffusion", "📁 Projektordner"]
@@ -393,7 +384,6 @@ class AllInOneGUI:
         except tk.TclError:
             bg_color = "#f0f0f0"
 
-        # KORREKTUR: Dezenteres Design
         self.fig = Figure(figsize=(4, 6), dpi=90, facecolor=bg_color)
         self.fig.subplots_adjust(left=0.3, right=0.9, top=0.9, bottom=0.1, hspace=0.6)
 
@@ -456,13 +446,12 @@ class AllInOneGUI:
         for ax in [self.ax_cpu, self.ax_ram, self.ax_gpu]:
             ax.set_xlim(0, 105)
             ax.tick_params(axis='y', length=0, labelsize=9)
-            ax.tick_params(axis='x', length=0, labelsize=0) # X-Achse ausblenden
+            ax.tick_params(axis='x', length=0, labelsize=0)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
             ax.spines['bottom'].set_visible(False)
             ax.spines['left'].set_color('#bbbbbb')
 
-        # Text-Labels aktualisieren
         self.disk_label.config(text=f"💾 Disk: {data.get('disk_used', 0):.1f}/{data.get('disk_total', 0):.1f} GB ({data.get('disk_percent', 0):.1f}%)")
         self.net_label.config(text=f"🌐 Netz: ↓ {data.get('net_down', 0):.2f} MB/s | ↑ {data.get('net_up', 0):.2f} MB/s")
 
@@ -484,11 +473,11 @@ class AllInOneGUI:
         self.kyutai_port.set(DEFAULT_KYUTAI_PORT)
         self.searxng_port.set(DEFAULT_SEARXNG_PORT)
         self.stablediffusion_port.set(DEFAULT_STABLEDIFFUSION_PORT)
+        self.openwebui_port.set(DEFAULT_OPENWEBUI_PORT)
         self.log("🔄 Ports auf Standardwerte zurückgesetzt (SearxNG: 8888, Stable Diffusion: 7860).", tag="info")
 
     def log(self, text, tag="info"):
         self.logbox.configure(state=tk.NORMAL)
-        # Sicherstellen, dass Zeilenenden vorhanden sind
         if not text.endswith("\n"):
             text += "\n"
         self.logbox.insert(tk.END, text, tag)
@@ -504,7 +493,6 @@ class AllInOneGUI:
 
     def get_docker_compose_content(self):
         """Generiert docker-compose.yml Inhalt mit aktuellen Port-Einstellungen - VISION SERVICE FIX"""
-        # Port-Werte als Variablen für saubere String-Formatierung
         n8n_port = self.n8n_port.get()
         ollama_port = self.ollama_port.get()
         vision_port = self.vision_port.get()
@@ -512,10 +500,10 @@ class AllInOneGUI:
         searxng_port = self.searxng_port.get()
         stablediffusion_webui_port = self.stablediffusion_port.get()
         stablediffusion_api_port = stablediffusion_webui_port - 1
+        openwebui_port = self.openwebui_port.get()
         n8n_user = self.n8n_user.get()
         n8n_pass = self.n8n_pass.get()
         
-        # KORREKTUR: Alle Dictionaries in den generierten Python-Skripten müssen mit doppelten Klammern {{...}} versehen werden.
         return """services:
           postgres:
             image: postgres:15
@@ -996,6 +984,27 @@ class AllInOneGUI:
             volumes:
               - ./searxng_data:/etc/searxng
 
+          open-webui:
+            image: ghcr.io/open-webui/open-webui:main
+            restart: unless-stopped
+            ports:
+              - "{openwebui_port}:8080"
+            environment:
+              - OLLAMA_BASE_URL=http://ollama:11434
+              - WEBUI_SECRET_KEY=your-secret-key-here
+              - WEBUI_NAME=Local AI WebUI
+            volumes:
+              - ./openwebui_data:/app/backend/data
+            depends_on:
+              - ollama
+            deploy:
+              resources:
+                reservations:
+                  devices:
+                    - driver: nvidia
+                      count: all
+                      capabilities: [gpu]
+
           n8n:
             image: n8nio/n8n
             restart: unless-stopped
@@ -1023,6 +1032,7 @@ class AllInOneGUI:
               - stable-diffusion
               - kyutai-voice
               - searxng
+              - open-webui
         """.format(
                 ollama_port=ollama_port,
                 vision_port=vision_port,
@@ -1030,6 +1040,7 @@ class AllInOneGUI:
                 searxng_port=searxng_port,
                 stablediffusion_webui_port=stablediffusion_webui_port,
                 stablediffusion_api_port=stablediffusion_api_port,
+                openwebui_port=openwebui_port,
                 n8n_port=n8n_port,
                 n8n_user=n8n_user,
                 n8n_pass=n8n_pass
@@ -1756,6 +1767,7 @@ Alternative:
                 "vision_data", 
                 "kyutai", 
                 "searxng_data",
+                "openwebui_data",
                 # Neue persistente Modell-Verzeichnisse
                 "vision_models",          # Für Vision-Modelle (YOLO, PyTorch)
                 "vision_models/torch",    # PyTorch Modelle
@@ -1914,6 +1926,7 @@ Alternative:
             self.log(f"   • Vision Service: http://localhost:{self.vision_port.get()}", tag="info")
             self.log(f"   • Kyutai Voice: http://localhost:{self.kyutai_port.get()}", tag="info")
             self.log(f"   • SearxNG: http://localhost:{self.searxng_port.get()}", tag="info")
+            self.log(f"   • Open-WebUI: http://localhost:{self.openwebui_port.get()}", tag="info")
             return True
         else:
             self.log(f"❌ Fehler beim Start: {out}", tag="error")
@@ -2025,7 +2038,8 @@ Alternative:
             ("vision", f"http://localhost:{self.vision_port.get()}"),
             ("kyutai", f"http://localhost:{self.kyutai_port.get()}"),
             ("searxng", f"http://localhost:{self.searxng_port.get()}"),
-            ("stable-diffusion", f"http://localhost:{self.stablediffusion_port.get()}/health")
+            ("stable-diffusion", f"http://localhost:{self.stablediffusion_port.get()}/health"),
+            ("open-webui", f"http://localhost:{self.openwebui_port.get()}")
         ]
         
         success_count = 0
@@ -2053,6 +2067,17 @@ Alternative:
             self.log(f"🌐 Stable Diffusion geöffnet: {url}", tag="ok")
         except Exception as e:
             self.log(f"❌ Fehler beim Öffnen von Stable Diffusion: {e}", tag="error")
+            self.log(f"💡 Öffne manuell: {url}", tag="info")
+
+    def open_openwebui(self):
+        url = f"http://localhost:{self.openwebui_port.get()}"
+        try:
+            webbrowser.open(url)
+            self.log(f"🌐 Open-WebUI geöffnet: {url}", tag="ok")
+            self.log("💡 Moderne Chat-Oberfläche für Ollama-Modelle", tag="info")
+            self.log("🎯 Verbindet automatisch mit lokalem Ollama Service", tag="info")
+        except Exception as e:
+            self.log(f"❌ Fehler beim Öffnen von Open-WebUI: {e}", tag="error")
             self.log(f"💡 Öffne manuell: {url}", tag="info")
 
     def ollama_pull_dialog(self):
