@@ -47,13 +47,14 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 4. - Ollama wird im Destop Composer automatisch installiert - Die Windows Variante unter "Punkt 4" ist nicht notwendig
 
 **Nicht vergessen, nachdem das Desktop Composer Setup durch ist, muss man noch ein llm installieren**
-Bei Management & Tests "Ollama Modell Pull" vereinfacht machbar.
+   - Bei Management & Tests "Ollama Modell Pull" vereinfacht machbar.
 
 ## Kommentar ##
 1.  **Projektziel und Idee**
    - Selbsthosten von KI's
    - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
    - Performance-Tests von KIs
+   - Informationsaustausch - n8n Workflows - Erfahrungen - komm ins > Discord
 
 Das Tool wurde für Einsteiger wie mich selbst erstellt - Ich liebe automatismen, und genau dazu sind Computer ja da :)
 
