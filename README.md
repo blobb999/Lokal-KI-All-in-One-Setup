@@ -50,7 +50,7 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 1.  **Projektziel und Idee**
    - Selbsthosten von KI's
    - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
-   - Performance-Tests von KIs
-   - Informationsaustausch - n8n Workflows - Erfahrungen - komm ins > Discord
+   - Performance-Tests von System mit KIs
+   - Unendliche Automatisierungs-Möglichkeiten mit n8n - man muss nur wissen wie :)
+   - Für Informationsaustausch - n8n Workflows - Erfahrungen - komm ins > Discord https://discord.com/channels/1404563003046887665/1404563003499876405
 Das Tool wurde für Einsteiger wie mich selbst erstellt - Ich liebe automatismen, und genau dazu sind Computer ja da :)
-Kontakt: Discord - https://discord.com/channels/1404563003046887665/1404563003499876405
