@@ -52,5 +52,5 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
    - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
    - Performance-Tests von System mit KIs
    - Unendliche Automatisierungs-Möglichkeiten mit n8n - man muss nur wissen wie :)
-   - Für Informationsaustausch - n8n Workflows - Erfahrungen - komm ins > Discord https://discord.com/channels/1404563003046887665/1404563003499876405
+   - Für Informationsaustausch - n8n Workflows - Erfahrungen - komm ins > Discord Einladungslink: https://discord.gg/MWSTMVD8
 Das Tool wurde für Einsteiger wie mich selbst erstellt - Ich liebe automatismen, und genau dazu sind Computer ja da :)
