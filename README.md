@@ -42,6 +42,10 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 **Nicht vergessen, nachdem das Docker Composer Setup durch ist, muss man noch ein llm installieren**
    - Bei Management & Tests "Ollama Modell Pull" vereinfacht machbar.
    - **Open-WebUI** bietet eine intuitive Chat-Oberfläche für alle Ollama-Modelle - perfekt für interaktive KI-Gespräche!
+5. - OpenWebUI und SearXNG Anbindung sind tricky - man könnte es im docker composer automatisieren oder man steigt hier in erste manuelle Schritte ein
+     1. öffne Projektordner/SearXNG und editiere settings.yml, füge unter formats: - json hinzu, speichern.
+     2. öffne http://localhost:7070/admin/settings/web und füge http://192.168.2.134:8888 hinzu, fertig. Erst nach einem Docker restart funktioniert!
+
 ## Kommentar ##
 1.  **Projektziel und Idee**
    - Selbsthosten von KI's
