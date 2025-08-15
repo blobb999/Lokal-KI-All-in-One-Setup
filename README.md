@@ -31,6 +31,14 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 1. **Voraussetzungen**:
    - Windows Build aktualisiert
    - WSL & Virtualisierung aktiviert
+	cmd (mit adminrechten):
+	dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /norestart
+	dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /norestart
+	Reboot
+	cmd (mit adminrechten):
+	wsl --set-default-version 2
+	wsl --update --web-download
+	wsl --install -d Ubuntu
 2. **Hardware mindest Voraussetzung**:
    - i5 i5-8500
    - mindestens GPU RTX 3050
