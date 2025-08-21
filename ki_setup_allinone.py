@@ -74,6 +74,7 @@ DEFAULT_KYUTAI_PORT = 4005
 DEFAULT_SEARXNG_PORT = 8888
 DEFAULT_STABLEDIFFUSION_PORT = 7860
 DEFAULT_OPENWEBUI_PORT = 7070
+DEFAULT_FLOWISE_PORT = 3000
 
 DEFAULT_N8N_USER = "admin"
 DEFAULT_N8N_PASS = "deinpasswort"
@@ -296,33 +297,58 @@ class AllInOneGUI:
         self.searxng_port = tk.IntVar(value=DEFAULT_SEARXNG_PORT)
         self.stablediffusion_port = tk.IntVar(value=DEFAULT_STABLEDIFFUSION_PORT)
         self.openwebui_port = tk.IntVar(value=DEFAULT_OPENWEBUI_PORT)
+        self.flowise_port = tk.IntVar(value=DEFAULT_FLOWISE_PORT)
         port_configs = [
             ("n8n:", self.n8n_port), ("Ollama:", self.ollama_port), ("Vision:", self.vision_port),
             ("Kyutai:", self.kyutai_port), ("SearxNG:", self.searxng_port), ("Stable Diffusion:", self.stablediffusion_port),
-            ("Open-WebUI:", self.openwebui_port)
+            ("Open-WebUI:", self.openwebui_port), ("Flowise:", self.flowise_port)
         ]
+        items_per_row = 4
         for i, (label, var) in enumerate(port_configs):
-            ttk.Label(portf, text=label).grid(column=i*2, row=0, sticky=tk.W, padx=(10,2))
-            ttk.Entry(portf, textvariable=var, width=7).grid(column=i*2+1, row=0, sticky=tk.W, padx=(0,10))
-        portf.columnconfigure(14, weight=1)
-        ttk.Button(portf, text="Reset", command=self.reset_ports).grid(column=15, row=0, padx=10, sticky=tk.E)
+            row = i // items_per_row
+            col_base = (i % items_per_row) * 2
+            ttk.Label(portf, text=label).grid(column=col_base, row=row, sticky=tk.W, padx=(10, 2), pady=2)
+            ttk.Entry(portf, textvariable=var, width=7).grid(column=col_base + 1, row=row, sticky=tk.W, padx=(0, 10), pady=2)
+
+        # Reset-Button platzieren und Spalten konfigurieren
+        num_rows = (len(port_configs) + items_per_row - 1) // items_per_row
+        reset_button_col = items_per_row * 2
+        portf.columnconfigure(reset_button_col - 1, weight=1) # Spacer-Spalte
+        ttk.Button(portf, text="Reset", command=self.reset_ports).grid(column=reset_button_col, row=num_rows - 1, padx=10, sticky=tk.E)
 
         mgmtf = ttk.LabelFrame(left_frame, text="🎛️ Management & Tests")
         mgmtf.pack(fill=tk.X, padx=8, pady=6)
 
         mgmt_buttons_config = [
-            ("🛑 Docker Stop", self.docker_down), ("📋 Logs streamen", self.stream_logs),
-            ("⏹️ Logs stoppen", self.stop_logs), ("📊 Docker Status", self.docker_status),
-            ("🧪 Endpunkte testen", self.test_endpoints), ("📥 Ollama Modell Pull", self.ollama_pull_dialog),
-            ("📤 n8n Workflow import", self.import_n8n_workflow_dialog), ("🌐 Open n8n", self.open_n8n),
-            ("🖼️ Open Stable Diffusion", self.open_stablediffusion), ("🌐 Open-WebUI", self.open_openwebui),
-            ("📁 Projektordner", self.open_project_dir), ("🔍 SearxNG Info", self.show_searx_info)
+            ("🛑 Docker Stop", self.docker_down), 
+            ("📋 Logs streamen", self.stream_logs),
+            ("⏹️ Logs stoppen", self.stop_logs), 
+            ("📊 Docker Status", self.docker_status),
+            
+            ("🧪 Endpunkte testen", self.test_endpoints), 
+            ("📥 Ollama Modell Pull", self.ollama_pull_dialog),
+            ("📤 n8n Workflow import", self.import_n8n_workflow_dialog),
+            ("🔍 SearxNG Info", self.show_searx_info),
+
+            ("🌐 Open n8n", self.open_n8n), 
+            ("🖼️ Open Stable Diffusion", self.open_stablediffusion),
+            ("🌊 Open Flowise", self.open_flowise),
+            ("🌐 Open-WebUI", self.open_openwebui),
+            ("📁 Projektordner", self.open_project_dir)
         ]
+        
         for i, (text, command) in enumerate(mgmt_buttons_config):
-            is_threaded = text not in ["📥 Ollama Modell Pull", "⏹️ Logs stoppen", "🌐 Open n8n", "🖼️ Open Stable Diffusion", "📁 Projektordner"]
+            # Die is_threaded Logik muss Open-WebUI und Flowise berücksichtigen
+            is_threaded = text not in [
+                "📥 Ollama Modell Pull", "⏹️ Logs stoppen", "🌐 Open n8n", 
+                "🖼️ Open Stable Diffusion", "🌊 Open Flowise", "🌐 Open-WebUI", 
+                "📁 Projektordner"
+            ]
             btn_command = self.threaded(command) if is_threaded else command
             btn = ttk.Button(mgmtf, text=text, command=btn_command)
+            # Dynamisches Grid-Layout für eine variable Anzahl von Buttons
             btn.grid(column=i % 4, row=i // 4, padx=4, pady=4, sticky="ew")
+        
         for i in range(4): mgmtf.columnconfigure(i, weight=1)
 
         logf = ttk.LabelFrame(left_frame, text="📝 Status & Logs")
@@ -457,8 +483,6 @@ class AllInOneGUI:
 
         self.canvas.draw()
 
-
-
     # ------------------- UI Hilfsfunktionen -------------------
     def browse_folder(self):
         d = filedialog.askdirectory(initialdir=self.project_var.get())
@@ -474,6 +498,7 @@ class AllInOneGUI:
         self.searxng_port.set(DEFAULT_SEARXNG_PORT)
         self.stablediffusion_port.set(DEFAULT_STABLEDIFFUSION_PORT)
         self.openwebui_port.set(DEFAULT_OPENWEBUI_PORT)
+        self.flowise_port.set(DEFAULT_FLOWISE_PORT)
         self.log("🔄 Ports auf Standardwerte zurückgesetzt (SearxNG: 8888, Stable Diffusion: 7860).", tag="info")
 
     def log(self, text, tag="info"):
@@ -501,6 +526,7 @@ class AllInOneGUI:
         stablediffusion_webui_port = self.stablediffusion_port.get()
         stablediffusion_api_port = stablediffusion_webui_port - 1
         openwebui_port = self.openwebui_port.get()
+        flowise_port = self.flowise_port.get()
         n8n_user = self.n8n_user.get()
         n8n_pass = self.n8n_pass.get()
         
@@ -984,6 +1010,22 @@ class AllInOneGUI:
             volumes:
               - ./searxng_data:/etc/searxng
 
+          flowise:
+            image: flowiseai/flowise:latest
+            restart: unless-stopped
+            ports:
+              - "{flowise_port}:3000"
+            volumes:
+              - ./flowise_data:/root/.flowise
+            environment:
+              - PORT=3000
+              - DATABASE_PATH=/root/.flowise/flowise.db
+              - API_KEY_PATH=/root/.flowise/api.key
+              - SECRET_KEY_PATH=/root/.flowise/secret.key
+              - LOG_LEVEL=info
+            depends_on:
+              - ollama
+
           open-webui:
             image: ghcr.io/open-webui/open-webui:main
             restart: unless-stopped
@@ -1033,6 +1075,8 @@ class AllInOneGUI:
               - kyutai-voice
               - searxng
               - open-webui
+              - flowise
+
         """.format(
                 ollama_port=ollama_port,
                 vision_port=vision_port,
@@ -1040,6 +1084,7 @@ class AllInOneGUI:
                 searxng_port=searxng_port,
                 stablediffusion_webui_port=stablediffusion_webui_port,
                 stablediffusion_api_port=stablediffusion_api_port,
+                flowise_port=flowise_port,
                 openwebui_port=openwebui_port,
                 n8n_port=n8n_port,
                 n8n_user=n8n_user,
@@ -1059,10 +1104,15 @@ class AllInOneGUI:
             
         try:
             compose_content = self.get_docker_compose_content()
+            # Verwende textwrap.dedent, um führende Leerzeichen aus dem heredoc-String zu entfernen
             with open(compose_path, 'w', encoding='utf-8') as f:
-                f.write(compose_content)
+                f.write(textwrap.dedent(compose_content))
+            
             self.log(f"✅ docker-compose.yml geschrieben: {compose_path}", tag="ok")
-            self.log(f"🔌 Ports konfiguriert: n8n={self.n8n_port.get()}, ollama={self.ollama_port.get()}, vision={self.vision_port.get()}, kyutai={self.kyutai_port.get()}, searxng={self.searxng_port.get()}", tag="info")
+            
+            # KORRIGIERTE LOG-AUSGABE
+            self.log(f"🔌 Ports konfiguriert: n8n={self.n8n_port.get()}, ollama={self.ollama_port.get()}, vision={self.vision_port.get()}, kyutai={self.kyutai_port.get()}, searxng={self.searxng_port.get()}, stablediffusion={self.stablediffusion_port.get()}, flowise={self.flowise_port.get()}", tag="info")
+            
             return True
         except Exception as e:
             self.log(f"❌ Fehler beim Schreiben der docker-compose.yml: {e}", tag="error")
@@ -1767,6 +1817,7 @@ Alternative:
                 "vision_data", 
                 "kyutai", 
                 "searxng_data",
+                "flowise_data",
                 "openwebui_data",
                 # Neue persistente Modell-Verzeichnisse
                 "vision_models",          # Für Vision-Modelle (YOLO, PyTorch)
@@ -2078,6 +2129,15 @@ Alternative:
             self.log("🎯 Verbindet automatisch mit lokalem Ollama Service", tag="info")
         except Exception as e:
             self.log(f"❌ Fehler beim Öffnen von Open-WebUI: {e}", tag="error")
+            self.log(f"💡 Öffne manuell: {url}", tag="info")
+
+    def open_flowise(self):
+        url = f"http://localhost:{self.flowise_port.get( )}"
+        try:
+            webbrowser.open(url)
+            self.log(f"🌊 Flowise geöffnet: {url}", tag="ok")
+        except Exception as e:
+            self.log(f"❌ Fehler beim Öffnen von Flowise: {e}", tag="error")
             self.log(f"💡 Öffne manuell: {url}", tag="info")
 
     def ollama_pull_dialog(self):

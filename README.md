@@ -1,12 +1,13 @@
 # All-in-One KI- und Automatisierungsplattform
 ## Beschreibung
 Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche) zur Verwaltung einer lokalen KI- und Automatisierungsplattform. Sie ermöglicht das einfache Einrichten, Starten, Stoppen und Überwachen mehrerer KI- und Automatisierungsdienste über Docker. Die Plattform integriert verschiedene Tools für Workflows, Sprachmodelle, Bildverarbeitung, Sprachsynthese, Websuche und Bildgenerierung.
-![GUI Screenshot](Local-KI-All-in-One-SetupV3.jpg)
+![GUI Screenshot](Local-KI-All-in-One-SetupV4.jpg)
 ## Funktionen
 - **Projektstruktur erstellen**: Legt ein Projektverzeichnis mit persistenten Speicherorten für Modelle, Cache und Daten an, einschließlich `.gitignore` für große Dateien.
 - **Docker-Management**: Startet und stoppt Docker-Container für alle Dienste mit einer einzigen `docker-compose.yml`.
 - **Port-Konfiguration**: Ermöglicht das Anpassen der Ports für alle Dienste über die GUI:
   - n8n Web UI (Default: 5678)
+  - flowise (Default: 3000)
   - Ollama API (Default: 11434)
   - Vision Service (Default: 5000)
   - Kyutai Voice (Default: 8000)
@@ -16,6 +17,7 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
   - Open-WebUI (Default: 7070)
 - **Dienste**:
   - **n8n**: Automatisierung von Workflows mit Web-UI und Workflow-Import.
+  - **flowise**: Wie n8n - ohne Lizens Bias und remote Web-Support.
   - **Ollama**: API für Sprachmodelle mit Modell-Download-Funktion.
   - **Vision Service**: Bildverarbeitung mit persistenten Modellen (YOLO, PyTorch, Hugging Face).
   - **Kyutai**: Sprachsynthese mit persistenten Modellen.
@@ -31,14 +33,14 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 1. **Voraussetzungen**:
    - Windows Build aktualisiert
    - WSL & Virtualisierung aktiviert
-	- cmd (mit adminrechten):
-	- dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /norestart
-	- dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /norestart
-	- Reboot
-	- cmd (mit adminrechten):
-	- wsl --set-default-version 2
-	- wsl --update --web-download
-	- wsl --install -d Ubuntu
+	1. cmd (mit adminrechten):
+	2. dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /norestart
+	3. dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /norestart
+	4. Reboot
+	5. cmd (mit adminrechten):
+	6. wsl --set-default-version 2
+	7. wsl --update --web-download
+	8. wsl --install -d Ubuntu
 2. **Hardware mindest Voraussetzung**:
    - i5 i5-8500
    - mindestens GPU RTX 3050
@@ -59,6 +61,6 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
    - Selbsthosten von KI's
    - Turboschnelle und Kinderleichte Installation mit allen gängigen Komponenten
    - Performance-Tests von System mit KIs
-   - Unendliche Automatisierungs-Möglichkeiten mit n8n - man muss nur wissen wie :)
-   - Für Informationsaustausch - n8n Workflows - Erfahrungen - komm ins > Discord Einladungslink: https://discord.gg/MWSTMVD8
+   - Unendliche Automatisierungs-Möglichkeiten mit n8n oder flowise - man muss nur wissen wie :)
+   - Für Informationsaustausch - n8n/flowise Workflows - Erfahrungen - komm ins > Discord Einladungslink: https://discord.gg/MWSTMVD8
 Das Tool wurde für Einsteiger wie mich selbst erstellt - Ich liebe automatismen, und genau dazu sind Computer ja da :)
