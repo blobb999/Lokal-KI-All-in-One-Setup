@@ -15,6 +15,8 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
   - Visio Difussion WebUI (Default: 7860)
   - SearxNG Web (Default: 8888) (Bonus App)
   - Open-WebUI (Default: 7070)
+- **Stable-Diffuse**
+  - Select Stable-Diffuser Modul RealVisXL (Default) oder Stable Diffusion v1-5
 - **Dienste**:
   - **n8n**: Automatisierung von Workflows mit Web-UI und Workflow-Import.
   - **flowise**: Wie n8n - ohne Lizens Bias und remote Web-Support.
@@ -48,14 +50,15 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
 3. **Zeitaufwand**:
    - Bei Hardware Mindestvoraussetzung 11Mb/s Download dauert das Docker Compose Setup etwa 30 Minuten
    - Falls im Log längere Zeit nichts passiert, Netzwerk- und HD-Traffic im System-Dashboard beobachten!
-4. - Ollama wird vom Docker Composer automatisch installiert - Die Windows Variante unter "Punkt 4" ist nicht notwendig
+4. - Ollama wird vom Docker Composer automatisch installiert - Die Windows Variante unter "Punkt 4" ist optional.
 **Nicht vergessen, nachdem das Docker Composer Setup durch ist, muss man noch ein llm installieren**
    - Bei Management & Tests "Ollama Modell Pull" vereinfacht machbar.
    - **Open-WebUI** bietet eine intuitive Chat-Oberfläche für alle Ollama-Modelle - perfekt für interaktive KI-Gespräche!
-5. - OpenWebUI und SearXNG Anbindung sind tricky - man könnte es im docker composer automatisieren oder man steigt hier in erste manuelle Schritte ein
+5. - OpenWebUI und SearXNG Anbindung
      1. öffne Projektordner/SearXNG und editiere settings.yml, füge unter formats: - json hinzu, speichern.
-     2. öffne http://localhost:7070/admin/settings/web und füge http://localhost:8888 hinzu, fertig. Erst nach einem Docker restart funktionierts!
-
+     2. öffne http://localhost:7070/admin/settings/web und füge http://localhost:8888 hinzu. Docker neustart!
+6. - API Anbindung der Bildgenerierung zu OpenWebUI
+     1. Engine AUTOMATIC1111-Basis-URL: http://stable-diffusion:7860
 ## Kommentar ##
 1.  **Projektziel und Idee**
    - Selbsthosten von KI's
