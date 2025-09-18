@@ -1,7 +1,7 @@
 # All-in-One KI- und Automatisierungsplattform
 ## Beschreibung
 Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche) zur Verwaltung einer lokalen KI- und Automatisierungsplattform. Sie ermöglicht das einfache Einrichten, Starten, Stoppen und Überwachen mehrerer KI- und Automatisierungsdienste über Docker. Die Plattform integriert verschiedene Tools für Workflows, Sprachmodelle, Bildverarbeitung, Sprachsynthese, Websuche und Bildgenerierung.
-![GUI Screenshot](Local-KI-All-in-One-SetupV7.jpg)
+![GUI Screenshot](Local-KI-All-in-One-Setup.jpg)
 ## Funktionen
 - **Projektstruktur erstellen**: Legt ein Projektverzeichnis mit persistenten Speicherorten für Modelle, Cache und Daten an, einschließlich `.gitignore` für große Dateien.
 - **Docker-Management**: Startet und stoppt Docker-Container für alle Dienste mit einer einzigen `docker-compose.yml`.
@@ -67,4 +67,5 @@ Diese Anwendung ist eine benutzerfreundliche GUI (grafische Benutzeroberfläche)
    - Unendliche Automatisierungs-Möglichkeiten mit n8n oder flowise - man muss nur wissen wie :)
    - Für Informationsaustausch - n8n/flowise Workflows - Erfahrungen - komm ins > Discord Einladungslink: https://discord.gg/MWSTMVD8
 Das Tool wurde für Einsteiger wie mich selbst erstellt - Ich liebe automatismen, und genau dazu sind Computer ja da :)
+
 
